@@ -1,0 +1,29 @@
+services:
+  mongodb:
+    image: mongo:7
+    container_name: multilingual-chat-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+
+  libretranslate:
+    image: libretranslate/libretranslate:latest
+    container_name: multilingual-chat-libretranslate
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "5000"
+      - "--load-only"
+      - "en,hi,es,fr,de,ja,mr"
+    volumes:
+      - libretranslate_models:/home/libretranslate/.local
+
+volumes:
+  mongodb_data:
+  libretranslate_models:
