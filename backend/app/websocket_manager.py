@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import contextlib
 import json
 import logging
@@ -11,6 +12,7 @@ from starlette.websockets import WebSocketState
 
 from app.schemas import (
     ConnectionAckMessage,
+    IncomingVoiceChunkMessage,
     IncomingSignalingMessage,
     OutgoingSignalingMessage,
     RoomMember,
@@ -18,8 +20,10 @@ from app.schemas import (
     RoomStats,
     SystemMessage,
     TranslatedChatMessage,
+    TranslatedTranscriptMessage,
     utc_timestamp,
 )
+from app.stt.service import stt_service
 from app.translation.service import (
     TranslationResult,
     detect_language_profile,
@@ -27,6 +31,7 @@ from app.translation.service import (
     normalize_language,
     translate_text,
 )
+from time import perf_counter
 
 
 logger = logging.getLogger(__name__)
@@ -57,6 +62,9 @@ class RoomState:
     room_id: str
     sessions: dict[str, ClientSession] = field(default_factory=dict)
     message_count: int = 0
+    call_active: bool = False
+    call_host_session_id: str | None = None
+    call_participants: set[str] = field(default_factory=set)
 
 
 class RoomConnectionManager:
@@ -302,6 +310,115 @@ class RoomConnectionManager:
                 target_session_id=target_session.session_id if target_session else None,
             )
 
+    async def process_voice_chunk(
+        self,
+        sender_socket: WebSocket,
+        message: IncomingVoiceChunkMessage,
+    ) -> None:
+        pipeline_started = perf_counter()
+        async with self._lock:
+            room = self.rooms.get(message.room_id)
+            sender_session = self._session_for_socket_unlocked(sender_socket)
+            if not room or not sender_session or sender_session.room_id != message.room_id:
+                return
+            receivers = list(room.sessions.values())
+
+        try:
+            audio_bytes = base64.b64decode(message.audio_base64)
+        except Exception as exc:
+            self._log_voice_event(
+                "chunk_rejected",
+                sender=sender_session,
+                sequence=message.sequence,
+                error=f"invalid_base64: {exc}",
+            )
+            return
+
+        self._log_voice_event(
+            "chunk_received",
+            sender=sender_session,
+            sequence=message.sequence,
+            byte_length=len(audio_bytes),
+            mime_type=message.mime_type,
+        )
+
+        try:
+            stt_result = await stt_service.transcribe(audio_bytes, message.mime_type)
+        except Exception as exc:
+            self._log_voice_event(
+                "stt_failed",
+                sender=sender_session,
+                sequence=message.sequence,
+                error=str(exc),
+            )
+            return
+
+        transcript = stt_result.text.strip()
+        if not transcript:
+            self._log_voice_event(
+                "empty_transcript",
+                sender=sender_session,
+                sequence=message.sequence,
+                stt_latency_ms=stt_result.latency_ms,
+            )
+            return
+
+        detection = await detect_language_profile(
+            transcript,
+            language_hint=stt_result.language or sender_session.preferred_language,
+        )
+        source_language = normalize_language(stt_result.language or detection.language)
+
+        for receiver in receivers:
+            translation_started = perf_counter()
+            if normalize_language(receiver.preferred_language) == source_language:
+                result = TranslationResult(
+                    original=transcript,
+                    translated=transcript,
+                    source_language=source_language,
+                    target_language=receiver.preferred_language,
+                    status="skipped_same_language",
+                    mixed_language=detection.mixed_language,
+                )
+            else:
+                result = await translate_text(
+                    text=transcript,
+                    target_lang=receiver.preferred_language,
+                    source_lang=source_language,
+                    mixed_language=detection.mixed_language,
+                )
+
+            translation_latency_ms = int((perf_counter() - translation_started) * 1000)
+            total_latency_ms = int((perf_counter() - pipeline_started) * 1000)
+            payload = TranslatedTranscriptMessage.create(
+                room_id=message.room_id,
+                sender_session_id=sender_session.session_id,
+                sender=sender_session.username,
+                original=transcript,
+                translated=result.translated,
+                detected_language=source_language,
+                target_language=result.target_language,
+                sequence=message.sequence,
+                stt_provider=stt_result.provider,
+                stt_latency_ms=stt_result.latency_ms,
+                translation_latency_ms=translation_latency_ms,
+                total_latency_ms=total_latency_ms,
+                translation_status=result.status,
+                translation_error=result.error,
+            )
+            self._enqueue(receiver, payload.model_dump_json(), event="voice_transcript")
+            self._log_voice_event(
+                "transcript_delivered",
+                sender=sender_session,
+                receiver=receiver,
+                sequence=message.sequence,
+                source_language=source_language,
+                target_language=result.target_language,
+                stt_latency_ms=stt_result.latency_ms,
+                translation_latency_ms=translation_latency_ms,
+                total_latency_ms=total_latency_ms,
+            )
+
     async def broadcast_system(
         self,
         room_id: str,
@@ -344,16 +461,132 @@ class RoomConnectionManager:
     ) -> bool:
         async with self._lock:
             sender = self._session_for_socket_unlocked(sender_socket)
-            target = self.sessions.get(message.target_session_id)
+            room = self.rooms.get(message.room_id)
 
-            if (
-                not sender
-                or not target
-                or sender.room_id != message.room_id
-                or target.room_id != message.room_id
-                or sender.session_id == target.session_id
-            ):
-                if sender:
+            if not sender or not room or sender.room_id != message.room_id:
+                return False
+
+            if message.type == "call_started":
+                if sender.role not in {"host", "admin"}:
+                    self._log_signaling_event(
+                        "relay_rejected",
+                        session=sender,
+                        target_session_id=None,
+                        signaling_type=message.type,
+                        reason="host_required",
+                    )
+                    return False
+
+                room.call_active = True
+                room.call_host_session_id = sender.session_id
+                room.call_participants.add(sender.session_id)
+                outgoing = OutgoingSignalingMessage.create(
+                    message_type="call_started",
+                    room_id=message.room_id,
+                    sender_session_id=sender.session_id,
+                    sender_name=sender.username,
+                    payload={
+                        "host_session_id": sender.session_id,
+                        "participants": sorted(room.call_participants),
+                    },
+                )
+                sessions = list(room.sessions.values())
+                self._log_signaling_event(
+                    "call_started",
+                    session=sender,
+                    target_session_id=None,
+                    participants=len(room.call_participants),
+                )
+            elif message.type == "call_ended":
+                room_wide = (
+                    sender.session_id == room.call_host_session_id
+                    or sender.role in {"host", "admin"}
+                    or not room.call_active
+                )
+                if room_wide:
+                    room.call_active = False
+                    room.call_host_session_id = None
+                    room.call_participants.clear()
+                    payload = {"reason": "room_call_ended"}
+                else:
+                    room.call_participants.discard(sender.session_id)
+                    payload = {
+                        "reason": "peer_left",
+                        "participants": sorted(room.call_participants),
+                    }
+
+                outgoing = OutgoingSignalingMessage.create(
+                    message_type="call_ended",
+                    room_id=message.room_id,
+                    sender_session_id=sender.session_id,
+                    sender_name=sender.username,
+                    payload={**payload, **(message.payload or {})},
+                )
+                sessions = list(room.sessions.values())
+                self._log_signaling_event(
+                    "call_ended",
+                    session=sender,
+                    target_session_id=None,
+                    reason=payload["reason"],
+                )
+            elif message.type in {
+                "webrtc_offer",
+                "webrtc_answer",
+                "webrtc_ice_candidate",
+            }:
+                if not message.target_session_id:
+                    self._log_signaling_event(
+                        "relay_rejected",
+                        session=sender,
+                        target_session_id=None,
+                        signaling_type=message.type,
+                        reason="missing_target",
+                    )
+                    return False
+
+                target = self.sessions.get(message.target_session_id)
+                if (
+                    not target
+                    or target.room_id != message.room_id
+                    or sender.session_id == target.session_id
+                ):
+                    self._log_signaling_event(
+                        "relay_rejected",
+                        session=sender,
+                        target_session_id=message.target_session_id,
+                        signaling_type=message.type,
+                        reason="invalid_target",
+                    )
+                    return False
+
+                room.call_participants.add(sender.session_id)
+                room.call_participants.add(target.session_id)
+                outgoing = OutgoingSignalingMessage.create(
+                    message_type=message.type,
+                    room_id=message.room_id,
+                    sender_session_id=sender.session_id,
+                    sender_name=sender.username,
+                    target_session_id=target.session_id,
+                    payload=message.payload,
+                )
+                event_by_type = {
+                    "webrtc_offer": "offer_created",
+                    "webrtc_answer": "answer_received",
+                    "webrtc_ice_candidate": "ice_candidate_exchange",
+                }
+                self._log_signaling_event(
+                    event_by_type[message.type],
+                    session=sender,
+                    target_session_id=target.session_id,
+                )
+                return self._enqueue(target, outgoing.model_dump_json(), event=message.type)
+            else:
+                target = self.sessions.get(message.target_session_id or "")
+                if (
+                    not target
+                    or target.room_id != message.room_id
+                    or sender.session_id == target.session_id
+                ):
                     self._log_signaling_event(
                         "relay_rejected",
                         session=sender,
@@ -362,6 +595,13 @@ class RoomConnectionManager:
                         reason="invalid_target",
                     )
                 return False
+
+            if message.type in {"call_started", "call_ended"}:
+                payload = outgoing.model_dump_json()
+                delivered = True
+                for session in sessions:
+                    delivered = self._enqueue(session, payload, event=message.type) and delivered
+                return delivered
 
             if message.type == "call_request":
                 if sender.active_peer_session_id or target.active_peer_session_id:
@@ -657,6 +897,30 @@ class RoomConnectionManager:
                 sort_keys=True,
             )
         )
+
+    def _log_voice_event(
+        self,
+        event: str,
+        sender: ClientSession,
+        receiver: ClientSession | None = None,
+        **fields: object,
+    ) -> None:
+        payload = {
+            "event": f"voice_translation.{event}",
+            "room_id": sender.room_id,
+            "sender_session_id": sender.session_id,
+            "sender_name": sender.username,
+            **fields,
+        }
+        if receiver:
+            payload.update(
+                {
+                    "receiver_session_id": receiver.session_id,
+                    "receiver_name": receiver.username,
+                    "receiver_language": receiver.preferred_language,
+                }
+            )
+        logger.info(json.dumps(payload, ensure_ascii=False, sort_keys=True))
 
     def _log_signaling_event(
         self,

@@ -12,7 +12,13 @@ from app.auth.service import decode_token
 from app.database import get_db
 from app.repositories.message_repository import MessageRepository
 from app.repositories.user_repository import UserRepository
-from app.schemas import IncomingChatMessage, IncomingSignalingMessage, JoinMessage, RoomStats
+from app.schemas import (
+    IncomingChatMessage,
+    IncomingSignalingMessage,
+    IncomingVoiceChunkMessage,
+    JoinMessage,
+    RoomStats,
+)
 from app.translation.service import SUPPORTED_LANGUAGES, normalize_language
 from app.websocket_manager import RoomConnectionManager
 
@@ -24,11 +30,14 @@ SIGNALING_TYPES = {
     "webrtc_offer",
     "webrtc_answer",
     "webrtc_ice_candidate",
+    "call_started",
+    "call_ended",
     "call_request",
     "call_accept",
     "call_reject",
     "call_end",
 }
+VOICE_TYPES = {"voice_chunk"}
 
 
 async def _get_user_from_token(token: Optional[str]) -> Optional[dict]:
@@ -110,6 +119,38 @@ async def websocket_room_chat(
                 continue
 
             payload_type = raw_payload.get("type", "chat")
+            if payload_type in VOICE_TYPES:
+                try:
+                    voice_chunk = IncomingVoiceChunkMessage.model_validate(raw_payload)
+                except ValidationError as exc:
+                    logger.warning(
+                        json.dumps(
+                            {
+                                "event": "transport.invalid_voice_chunk",
+                                "room_id": room_id,
+                                "error": str(exc),
+                            },
+                            sort_keys=True,
+                        )
+                    )
+                    continue
+
+                if voice_chunk.room_id != room_id:
+                    logger.warning(
+                        json.dumps(
+                            {
+                                "event": "transport.room_mismatch",
+                                "expected_room_id": room_id,
+                                "payload_room_id": voice_chunk.room_id,
+                            },
+                            sort_keys=True,
+                        )
+                    )
+                    continue
+
+                asyncio.create_task(manager.process_voice_chunk(websocket, voice_chunk))
+                continue
+
             if payload_type in SIGNALING_TYPES:
                 try:
                     signal = IncomingSignalingMessage.model_validate(raw_payload)

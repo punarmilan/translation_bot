@@ -28,10 +28,21 @@ class IncomingChatMessage(BaseModel):
     target_session_id: str | None = None
 
 
+class IncomingVoiceChunkMessage(BaseModel):
+    type: Literal["voice_chunk"] = "voice_chunk"
+    room_id: str = Field(min_length=1)
+    audio_base64: str = Field(min_length=1)
+    mime_type: str = "audio/webm"
+    sequence: int = Field(ge=0)
+    captured_at: str | None = None
+
+
 SignalingMessageType = Literal[
     "webrtc_offer",
     "webrtc_answer",
     "webrtc_ice_candidate",
+    "call_started",
+    "call_ended",
     "call_request",
     "call_accept",
     "call_reject",
@@ -42,7 +53,7 @@ SignalingMessageType = Literal[
 class IncomingSignalingMessage(BaseModel):
     type: SignalingMessageType
     room_id: str = Field(min_length=1)
-    target_session_id: str = Field(min_length=1)
+    target_session_id: str | None = None
     payload: dict[str, Any] | None = None
 
 
@@ -121,7 +132,7 @@ class OutgoingSignalingMessage(BaseModel):
     room_id: str
     sender_session_id: str
     sender_name: str
-    target_session_id: str
+    target_session_id: str | None = None
     timestamp: str
     payload: dict[str, Any] | None = None
 
@@ -132,7 +143,7 @@ class OutgoingSignalingMessage(BaseModel):
         room_id: str,
         sender_session_id: str,
         sender_name: str,
-        target_session_id: str,
+        target_session_id: str | None = None,
         payload: dict[str, Any] | None = None,
     ) -> "OutgoingSignalingMessage":
         return cls(
@@ -203,6 +214,61 @@ class TranslatedChatMessage(BaseModel):
             translation_error=translation_error,
             cache_hit=cache_hit,
             mixed_language=mixed_language,
+        )
+
+
+class TranslatedTranscriptMessage(BaseModel):
+    type: Literal["voice_transcript"] = "voice_transcript"
+    room_id: str
+    sender_session_id: str
+    sender: str
+    original: str
+    translated: str
+    detected_language: str
+    target_language: str
+    timestamp: str
+    sequence: int
+    stt_provider: str
+    stt_latency_ms: int
+    translation_latency_ms: int
+    total_latency_ms: int
+    translation_status: str
+    translation_error: str | None = None
+
+    @classmethod
+    def create(
+        cls,
+        room_id: str,
+        sender_session_id: str,
+        sender: str,
+        original: str,
+        translated: str,
+        detected_language: str,
+        target_language: str,
+        sequence: int,
+        stt_provider: str,
+        stt_latency_ms: int,
+        translation_latency_ms: int,
+        total_latency_ms: int,
+        translation_status: str,
+        translation_error: str | None = None,
+    ) -> "TranslatedTranscriptMessage":
+        return cls(
+            room_id=room_id,
+            sender_session_id=sender_session_id,
+            sender=sender,
+            original=original,
+            translated=translated,
+            detected_language=detected_language,
+            target_language=target_language,
+            timestamp=utc_timestamp(),
+            sequence=sequence,
+            stt_provider=stt_provider,
+            stt_latency_ms=stt_latency_ms,
+            translation_latency_ms=translation_latency_ms,
+            total_latency_ms=total_latency_ms,
+            translation_status=translation_status,
+            translation_error=translation_error,
         )
 
 
