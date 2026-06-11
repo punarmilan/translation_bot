@@ -3,7 +3,7 @@ import { Navigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { getAdminUsers, getAllRoomStats, parseApiError } from "../services/api";
 
-const WS_BASE_URL = "ws://localhost:8000/ws";
+const WS_BASE_URL = "ws://192.168.1.53:8000/ws";
 const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 
 const LANGUAGE_OPTIONS = [
