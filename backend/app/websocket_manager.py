@@ -1,9 +1,12 @@
 import asyncio
+import base64
+import binascii
 import contextlib
 import json
 import logging
 from collections import Counter
 from dataclasses import dataclass, field
+from time import perf_counter
 from uuid import uuid4
 
 from fastapi import WebSocket
@@ -12,14 +15,17 @@ from starlette.websockets import WebSocketState
 from app.schemas import (
     ConnectionAckMessage,
     IncomingSignalingMessage,
+    IncomingVoiceChunkMessage,
     OutgoingSignalingMessage,
     RoomMember,
     RoomPresenceMessage,
     RoomStats,
     SystemMessage,
     TranslatedChatMessage,
+    TranslatedTranscriptMessage,
     utc_timestamp,
 )
+from app.stt.service import stt_service
 from app.translation.service import (
     TranslationResult,
     detect_language_profile,
@@ -33,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 OUTBOUND_QUEUE_MAX_SIZE = 100
 DELIVERY_TIMEOUT_SECONDS = 5.0
+VOICE_TRANSCRIPTION_TIMEOUT_SECONDS = 90.0
 QUEUE_SHUTDOWN_SENTINEL = "__transport_queue_shutdown__"
 
 
@@ -50,6 +57,7 @@ class ClientSession:
     sender_task: asyncio.Task[None] | None = None
     connected: bool = True
     active_peer_session_id: str | None = None
+    voice_chunk_in_progress: bool = False
 
 
 @dataclass
@@ -337,6 +345,181 @@ class RoomConnectionManager:
         for session in sessions:
             self._enqueue(session, payload, event="room_presence")
 
+    async def process_voice_chunk(
+        self,
+        sender_socket: WebSocket,
+        message: IncomingVoiceChunkMessage,
+    ) -> None:
+        started = perf_counter()
+        async with self._lock:
+            sender = self._session_for_socket_unlocked(sender_socket)
+            room = self.rooms.get(message.room_id)
+            recipients = list(room.sessions.values()) if room else []
+
+            if not sender or not room or sender.room_id != message.room_id:
+                return
+
+            if sender.voice_chunk_in_progress:
+                self._send_voice_status(
+                    sender,
+                    "Previous audio chunk is still processing.",
+                    level="info",
+                    sequence=message.sequence,
+                )
+                self._log_voice_event(
+                    "chunk_skipped",
+                    session=sender,
+                    sequence=message.sequence,
+                    reason="processing_in_progress",
+                )
+                return
+
+            sender.voice_chunk_in_progress = True
+
+        try:
+            try:
+                audio_bytes = base64.b64decode(message.audio_base64, validate=True)
+            except (binascii.Error, ValueError) as exc:
+                self._log_voice_event(
+                    "invalid_chunk",
+                    session=sender,
+                    sequence=message.sequence,
+                    error=str(exc),
+                )
+                self._send_voice_status(
+                    sender,
+                    "Could not read that audio chunk.",
+                    level="error",
+                    sequence=message.sequence,
+                )
+                return
+
+            try:
+                stt_result = await asyncio.wait_for(
+                    stt_service.transcribe(audio_bytes, message.mime_type),
+                    timeout=VOICE_TRANSCRIPTION_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                self._log_voice_event(
+                    "stt_timeout",
+                    session=sender,
+                    sequence=message.sequence,
+                    timeout_seconds=VOICE_TRANSCRIPTION_TIMEOUT_SECONDS,
+                )
+                self._send_voice_status(
+                    sender,
+                    "Whisper is still loading or downloading. Try again after it finishes.",
+                    level="error",
+                    sequence=message.sequence,
+                )
+                return
+            except Exception as exc:
+                self._log_voice_event(
+                    "stt_failure",
+                    session=sender,
+                    sequence=message.sequence,
+                    error=str(exc),
+                )
+                self._send_voice_status(
+                    sender,
+                    f"Speech-to-text failed: {exc}",
+                    level="error",
+                    sequence=message.sequence,
+                )
+                return
+
+            transcript = stt_result.text.strip()
+            if not transcript:
+                self._log_voice_event(
+                    "empty_transcript",
+                    session=sender,
+                    sequence=message.sequence,
+                    stt_latency_ms=stt_result.latency_ms,
+                    provider=stt_result.provider,
+                )
+                self._send_voice_status(
+                    sender,
+                    "No speech detected in the last audio chunk.",
+                    level="info",
+                    sequence=message.sequence,
+                )
+                return
+
+            detection = await detect_language_profile(
+                transcript,
+                language_hint=stt_result.language or sender.preferred_language,
+            )
+            source_language = normalize_language(detection.language)
+            result_by_language: dict[str, TranslationResult] = {}
+            latency_by_language: dict[str, int] = {}
+
+            async def result_for_language(target_language: str) -> TranslationResult:
+                target = normalize_language(target_language)
+                cached_result = result_by_language.get(target)
+                if cached_result:
+                    return cached_result
+
+                translation_started = perf_counter()
+                if target == source_language:
+                    result = TranslationResult(
+                        original=transcript,
+                        translated=transcript,
+                        source_language=source_language,
+                        target_language=target,
+                        status="skipped_same_language",
+                        mixed_language=detection.mixed_language,
+                    )
+                    log_translation_event("translation.skipped", result=result)
+                else:
+                    result = await translate_text(
+                        text=transcript,
+                        target_lang=target,
+                        source_lang=source_language,
+                        mixed_language=detection.mixed_language,
+                    )
+
+                latency_by_language[target] = int((perf_counter() - translation_started) * 1000)
+                result_by_language[target] = result
+                return result
+
+            for target_language in {session.preferred_language for session in recipients}:
+                await result_for_language(target_language)
+
+            for receiver in recipients:
+                result = await result_for_language(receiver.preferred_language)
+                total_latency_ms = int((perf_counter() - started) * 1000)
+                payload = TranslatedTranscriptMessage.create(
+                    room_id=message.room_id,
+                    sender_session_id=sender.session_id,
+                    sender=sender.username,
+                    original=transcript,
+                    translated=result.translated,
+                    detected_language=result.source_language,
+                    target_language=result.target_language,
+                    sequence=message.sequence,
+                    stt_provider=stt_result.provider,
+                    stt_latency_ms=stt_result.latency_ms,
+                    translation_latency_ms=latency_by_language.get(result.target_language, 0),
+                    total_latency_ms=total_latency_ms,
+                    translation_status=result.status,
+                    translation_error=result.error,
+                )
+                self._enqueue(receiver, payload.model_dump_json(), event="voice_transcript")
+
+            self._log_voice_event(
+                "transcript_broadcast",
+                session=sender,
+                sequence=message.sequence,
+                detected_language=source_language,
+                recipient_count=len(recipients),
+                stt_latency_ms=stt_result.latency_ms,
+                total_latency_ms=int((perf_counter() - started) * 1000),
+            )
+        finally:
+            async with self._lock:
+                if sender.session_id in self.sessions:
+                    sender.voice_chunk_in_progress = False
+
     async def relay_signaling(
         self,
         sender_socket: WebSocket,
@@ -344,12 +527,59 @@ class RoomConnectionManager:
     ) -> bool:
         async with self._lock:
             sender = self._session_for_socket_unlocked(sender_socket)
+            if not sender or sender.room_id != message.room_id:
+                return False
+
+            room = self.rooms.get(message.room_id)
+            if not room:
+                self._log_signaling_event(
+                    "relay_rejected",
+                    session=sender,
+                    target_session_id=message.target_session_id,
+                    signaling_type=message.type,
+                    reason="room_not_found",
+                )
+                return False
+
+            if message.type in {"call_started", "call_ended"}:
+                if message.type == "call_ended":
+                    for session in room.sessions.values():
+                        if session.session_id == sender.session_id:
+                            continue
+                        if session.active_peer_session_id == sender.session_id:
+                            session.active_peer_session_id = None
+                    sender.active_peer_session_id = None
+
+                recipients = [
+                    session
+                    for session in room.sessions.values()
+                    if session.session_id != sender.session_id
+                ]
+                outgoing = OutgoingSignalingMessage.create(
+                    message_type=message.type,
+                    room_id=message.room_id,
+                    sender_session_id=sender.session_id,
+                    sender_name=sender.username,
+                    payload=message.payload,
+                )
+                payload = outgoing.model_dump_json()
+                event_name = "call_started" if message.type == "call_started" else "call_ended"
+                self._log_signaling_event(
+                    event_name,
+                    session=sender,
+                    target_session_id=None,
+                    recipient_count=len(recipients),
+                )
+
+                delivered = False
+                for recipient in recipients:
+                    delivered = self._enqueue(recipient, payload, event=message.type) or delivered
+                return delivered
+
             target = self.sessions.get(message.target_session_id)
 
             if (
-                not sender
-                or not target
-                or sender.room_id != message.room_id
+                not target
                 or target.room_id != message.room_id
                 or sender.session_id == target.session_id
             ):
@@ -529,6 +759,23 @@ class RoomConnectionManager:
         with contextlib.suppress(asyncio.QueueFull):
             session.outbound_queue.put_nowait(QUEUE_SHUTDOWN_SENTINEL)
 
+    def _send_voice_status(
+        self,
+        session: ClientSession,
+        message: str,
+        level: str = "info",
+        sequence: int | None = None,
+    ) -> None:
+        payload = {
+            "type": "voice_status",
+            "room_id": session.room_id,
+            "message": message,
+            "level": level,
+            "sequence": sequence,
+            "timestamp": utc_timestamp(),
+        }
+        self._enqueue(session, json.dumps(payload), event="voice_status")
+
     def _session_for_socket_unlocked(self, websocket: WebSocket) -> ClientSession | None:
         session_id = self.sessions_by_socket.get(websocket)
         if not session_id:
@@ -658,11 +905,26 @@ class RoomConnectionManager:
             )
         )
 
+    def _log_voice_event(
+        self,
+        event: str,
+        session: ClientSession,
+        **fields: object,
+    ) -> None:
+        payload = {
+            "event": f"voice_translation.{event}",
+            "session_id": session.session_id,
+            "room_id": session.room_id,
+            "username": session.username,
+            **fields,
+        }
+        logger.info(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+
     def _log_signaling_event(
         self,
         event: str,
         session: ClientSession,
-        target_session_id: str,
+        target_session_id: str | None,
         **fields: object,
     ) -> None:
         payload = {

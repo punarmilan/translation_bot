@@ -1,6 +1,9 @@
 import axios from "axios";
 
-const BASE_URL = "http://192.168.1.53:8000";
+const API_HOST = window.location.hostname || "localhost";
+const API_PROTOCOL = window.location.protocol === "https:" ? "https" : "http";
+const BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || `${API_PROTOCOL}://${API_HOST}:8000`;
 
 const client = axios.create({ baseURL: BASE_URL });
 
@@ -31,7 +34,7 @@ export function parseApiError(err) {
   if (err?.response?.data?.message) return err.response.data.message;
   if (err?.response?.status) return `Request failed with status ${err.response.status}`;
   if (err?.code === "ERR_NETWORK") {
-    return "Could not reach the backend. Make sure FastAPI is running on localhost:8000.";
+    return "Could not reach the backend. Make sure FastAPI is running on port 8000.";
   }
   if (err?.message) return err.message;
   return null;

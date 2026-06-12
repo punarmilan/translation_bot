@@ -12,9 +12,10 @@ from typing import Protocol
 logger = logging.getLogger(__name__)
 
 STT_PROVIDER = os.getenv("STT_PROVIDER", "faster_whisper")
-WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "tiny")
 WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
 WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
 
 @dataclass(frozen=True)

@@ -3,7 +3,9 @@ import { Navigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { getAdminUsers, getAllRoomStats, parseApiError } from "../services/api";
 
-const WS_BASE_URL = "ws://192.168.1.53:8000/ws";
+const API_HOST = window.location.hostname || "localhost";
+const WS_PROTOCOL = window.location.protocol === "https:" ? "wss" : "ws";
+const WS_BASE_URL = `${WS_PROTOCOL}://${API_HOST}:8000/ws`;
 const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 
 const LANGUAGE_OPTIONS = [
@@ -257,6 +259,7 @@ function TranscriptPanel({
   transcripts,
   enabled,
   error,
+  status,
   onStart,
   onStop,
 }) {
@@ -279,6 +282,7 @@ function TranscriptPanel({
         </button>
       </div>
       {error && <p className="mb-2 text-xs text-red-300">{error}</p>}
+      {status && <p className="mb-2 text-xs text-brand-bg/50">{status}</p>}
       <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
         {transcripts.length === 0 ? (
           <p className="text-xs text-brand-bg/40">
@@ -382,6 +386,7 @@ export default function ChatPage() {
   const [callError, setCallError] = useState("");
   const [transcriptionEnabled, setTranscriptionEnabled] = useState(false);
   const [transcriptionError, setTranscriptionError] = useState("");
+  const [transcriptionStatus, setTranscriptionStatus] = useState("");
   const [transcripts, setTranscripts] = useState([]);
   const [connectedPeerIds, setConnectedPeerIds] = useState([]);
   const [remoteStreams, setRemoteStreams] = useState({});
@@ -400,6 +405,7 @@ export default function ChatPage() {
   const remoteAudioRefs = useRef(new Map());
   const pendingIceCandidatesRef = useRef(new Map());
   const mediaRecorderRef = useRef(null);
+  const transcriptionIntervalRef = useRef(null);
   const voiceSequenceRef = useRef(0);
   const sessionIdRef = useRef(null);
   const membersRef = useRef([]);
@@ -489,26 +495,30 @@ export default function ChatPage() {
   };
 
   const stopVoiceTranscription = () => {
+    if (transcriptionIntervalRef.current) {
+      clearInterval(transcriptionIntervalRef.current);
+      transcriptionIntervalRef.current = null;
+    }
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state !== "inactive") {
       recorder.stop();
     }
     mediaRecorderRef.current = null;
     setTranscriptionEnabled(false);
+    setTranscriptionStatus("");
   };
 
   const startVoiceTranscription = async () => {
     try {
       setTranscriptionError("");
+      setTranscriptionStatus("Listening...");
       const stream = await ensureLocalAudio();
       const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
         ? "audio/webm;codecs=opus"
         : "audio/webm";
-      const recorder = new MediaRecorder(stream, { mimeType });
-      mediaRecorderRef.current = recorder;
       voiceSequenceRef.current = 0;
 
-      recorder.ondataavailable = async (event) => {
+      const sendAudioBlob = async (event) => {
         if (!event.data || event.data.size === 0) return;
         if (socketRef.current?.readyState !== WebSocket.OPEN) return;
         const audioBase64 = await blobToBase64(event.data);
@@ -521,14 +531,29 @@ export default function ChatPage() {
           captured_at: new Date().toISOString(),
         });
         voiceSequenceRef.current += 1;
+        setTranscriptionStatus(`Audio chunk ${voiceSequenceRef.current} sent. Waiting for transcript...`);
       };
 
-      recorder.onerror = () => {
-        setTranscriptionError("Could not record microphone audio.");
-        stopVoiceTranscription();
+      const startSegmentRecorder = () => {
+        const recorder = new MediaRecorder(stream, { mimeType });
+        mediaRecorderRef.current = recorder;
+        recorder.ondataavailable = sendAudioBlob;
+        recorder.onerror = () => {
+          setTranscriptionError("Could not record microphone audio.");
+          stopVoiceTranscription();
+        };
+        recorder.start();
       };
 
-      recorder.start(3000);
+      startSegmentRecorder();
+      transcriptionIntervalRef.current = window.setInterval(() => {
+        const recorder = mediaRecorderRef.current;
+        if (!recorder || recorder.state === "inactive") return;
+        recorder.onstop = () => {
+          if (transcriptionIntervalRef.current) startSegmentRecorder();
+        };
+        recorder.stop();
+      }, 4000);
       setTranscriptionEnabled(true);
     } catch (error) {
       console.error("Could not start voice transcription", error);
@@ -834,7 +859,16 @@ export default function ChatPage() {
         return;
       }
       if (payload.type === "voice_transcript") {
+        setTranscriptionError("");
+        setTranscriptionStatus(`Latest transcript received in ${payload.total_latency_ms}ms.`);
         setTranscripts((current) => [{ ...payload, id: crypto.randomUUID() }, ...current].slice(0, 50));
+        return;
+      }
+      if (payload.type === "voice_status") {
+        setTranscriptionStatus(payload.message || "Live translation status updated.");
+        if (payload.level === "error") {
+          setTranscriptionError(payload.message || "Live translation failed.");
+        }
         return;
       }
       setMessages((current) => [...current, { ...payload, id: crypto.randomUUID() }]);
@@ -982,6 +1016,7 @@ export default function ChatPage() {
             transcripts={transcripts}
             enabled={transcriptionEnabled}
             error={transcriptionError}
+            status={transcriptionStatus}
             onStart={startVoiceTranscription}
             onStop={stopVoiceTranscription}
           />
