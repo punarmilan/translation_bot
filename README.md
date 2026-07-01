@@ -1,7 +1,7 @@
 # Translation Bot
 
 Translation Bot is a real-time multilingual meeting platform built with React,
-FastAPI, WebSockets, WebRTC, Faster-Whisper, LibreTranslate, Piper, and MongoDB.
+FastAPI, WebSockets, WebRTC, nullWhisper, LibreTranslate, Piper, and MongoDB.
 
 It combines video meetings, translated chat, live speech transcription,
 machine translation, and synthesized translated speech in one authenticated
@@ -21,7 +21,7 @@ communicate in a preferred language:
 Speaker microphone
   -> browser voice activity detection
   -> WebSocket audio segment
-  -> Faster-Whisper transcription
+  -> Whisper transcription
   -> source-language detection
   -> translation per unique target language
   -> Piper speech synthesis
@@ -50,7 +50,7 @@ translated captions, or a combined experience.
 
 - Continuous microphone capture while a meeting is active
 - Browser-side silence detection for sentence segmentation
-- Faster-Whisper speech-to-text
+- Whisper base speech-to-text
 - Source-language detection
 - LibreTranslate integration
 - Same-language translation skipping
@@ -107,7 +107,7 @@ docs/screenshots/voice-test.png
 | ICE | Google STUN |
 | Database | MongoDB 7 with Motor/PyMongo |
 | Authentication | JWT, bcrypt, FastAPI dependencies |
-| Speech-to-text | Faster-Whisper |
+| Speech-to-text | Whisper base |
 | Translation | LibreTranslate with caching and fallback handling |
 | Text-to-speech | Piper executable and ONNX voice models |
 | Local infrastructure | Docker Compose and self-signed HTTPS |
@@ -120,7 +120,7 @@ flowchart LR
     API["FastAPI REST API"]
     WS["WebSocket room manager"]
     Mongo["MongoDB"]
-    STT["Faster-Whisper"]
+    STT["Whisper base"]
     Translate["Translation service"]
     Libre["LibreTranslate"]
     TTS["Piper TTS"]
@@ -180,7 +180,7 @@ translation_bot/
 |   |   |-- models/                # MongoDB document models
 |   |   |-- realtime_translation/ # Translation-audio orchestration
 |   |   |-- repositories/          # MongoDB repository layer
-|   |   |-- stt/                   # Faster-Whisper provider
+|   |   |-- stt/                   # Whisper base provider
 |   |   |-- translation/           # Detection, caching, LibreTranslate
 |   |   |-- tts/                   # Piper and voice routing
 |   |   |-- main.py                # FastAPI application
@@ -252,7 +252,7 @@ npm install
 cd ..
 ```
 
-Faster-Whisper downloads the configured model on first use. The repository
+Whisper base downloads the configured model on first use. The repository
 currently defaults to the `base` model.
 
 Download the required Piper voice models:
@@ -575,5 +575,5 @@ Use `tiny` for speed or `small` for accuracy.
 
 ## Acknowledgements
 
-This project uses Faster-Whisper, LibreTranslate, Piper, WebRTC, FastAPI,
+This project uses Whisper base, LibreTranslate, Piper, WebRTC, FastAPI,
 React, and MongoDB.
