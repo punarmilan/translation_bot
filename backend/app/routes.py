@@ -1,11 +1,13 @@
 import asyncio
+import base64
 import json
 import logging
 from typing import Optional
 
 from pydantic import ValidationError
 
-from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, Field
 
 from app.auth.dependencies import get_current_user, require_role
 from app.auth.service import decode_token
@@ -14,11 +16,16 @@ from app.repositories.message_repository import MessageRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas import (
     IncomingChatMessage,
+    IncomingLanguageUpdateMessage,
+    IncomingListenerPreferencesMessage,
     IncomingSignalingMessage,
+    IncomingVoiceActivityMessage,
     IncomingVoiceChunkMessage,
     JoinMessage,
     RoomStats,
 )
+from app.stt.service import stt_service
+from app.tts.service import tts_service
 from app.translation.service import SUPPORTED_LANGUAGES, normalize_language
 from app.websocket_manager import RoomConnectionManager
 
@@ -37,7 +44,82 @@ SIGNALING_TYPES = {
     "call_reject",
     "call_end",
 }
-VOICE_TYPES = {"voice_chunk"}
+VOICE_TYPES = {"voice_chunk", "voice_activity"}
+LANGUAGE_TYPES = {"language_update"}
+PREFERENCE_TYPES = {"listener_preferences"}
+
+
+class TTSRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=800)
+    language: str | None = None
+    voice_preference: str | None = "auto"
+    speech_profile: str = "natural"
+
+
+class TTSResponse(BaseModel):
+    audio_base64: str
+    mime_type: str
+    provider: str
+    latency_ms: int
+    requested_voice: str
+    selected_voice: str
+    selected_model: str
+    output_file: str
+    speech_profile: str
+    fallback_used: bool
+
+
+@router.get("/stt/status")
+async def stt_status() -> dict:
+    return stt_service.status()
+
+
+@router.post("/stt/warmup")
+async def stt_warmup() -> dict:
+    try:
+        return await stt_service.warmup()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"STT warmup failed: {exc}",
+        ) from exc
+
+
+@router.get("/tts/status")
+async def tts_status() -> dict:
+    return tts_service.status()
+
+
+@router.post("/tts/synthesize", response_model=TTSResponse)
+async def synthesize_tts(
+    body: TTSRequest,
+    _: dict = Depends(get_current_user),
+) -> TTSResponse:
+    try:
+        result = await tts_service.synthesize(
+            text=body.text,
+            language=normalize_language(body.language or "en"),
+            voice_preference=body.voice_preference or "auto",
+            speech_profile=body.speech_profile,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"TTS synthesis failed: {exc}",
+        ) from exc
+
+    return TTSResponse(
+        audio_base64=base64.b64encode(result.audio_bytes).decode("ascii"),
+        mime_type=result.mime_type,
+        provider=result.provider,
+        latency_ms=result.latency_ms,
+        requested_voice=result.requested_voice,
+        selected_voice=result.selected_voice,
+        selected_model=result.selected_model,
+        output_file=result.output_file,
+        speech_profile=result.speech_profile,
+        fallback_used=result.fallback_used,
+    )
 
 
 async def _get_user_from_token(token: Optional[str]) -> Optional[dict]:
@@ -84,8 +166,11 @@ async def websocket_room_chat(
             websocket=websocket,
             room_id=room_id,
             username=authenticated_username,
+            name=current_user.get("name") or authenticated_username,
             preferred_language=authenticated_language,
             role=authenticated_role,
+            pronouns=current_user.get("pronouns"),
+            voice_preference=current_user.get("voice_preference", "auto"),
         )
         registered = True
 
@@ -119,7 +204,96 @@ async def websocket_room_chat(
                 continue
 
             payload_type = raw_payload.get("type", "chat")
+            if payload_type in PREFERENCE_TYPES:
+                try:
+                    preferences = IncomingListenerPreferencesMessage.model_validate(raw_payload)
+                except ValidationError as exc:
+                    logger.warning(
+                        json.dumps(
+                            {
+                                "event": "transport.invalid_listener_preferences",
+                                "room_id": room_id,
+                                "error": str(exc),
+                            },
+                            sort_keys=True,
+                        )
+                    )
+                    continue
+
+                if preferences.room_id != room_id:
+                    logger.warning(
+                        json.dumps(
+                            {
+                                "event": "transport.room_mismatch",
+                                "expected_room_id": room_id,
+                                "payload_room_id": preferences.room_id,
+                            },
+                            sort_keys=True,
+                        )
+                    )
+                    continue
+
+                await manager.update_listener_preferences(
+                    websocket,
+                    preferences.listener_mode,
+                )
+                continue
+
+            if payload_type in LANGUAGE_TYPES:
+                try:
+                    language_update = IncomingLanguageUpdateMessage.model_validate(raw_payload)
+                except ValidationError as exc:
+                    logger.warning(
+                        json.dumps(
+                            {
+                                "event": "transport.invalid_language_update",
+                                "room_id": room_id,
+                                "error": str(exc),
+                            },
+                            sort_keys=True,
+                        )
+                    )
+                    continue
+
+                if language_update.room_id != room_id:
+                    logger.warning(
+                        json.dumps(
+                            {
+                                "event": "transport.room_mismatch",
+                                "expected_room_id": room_id,
+                                "payload_room_id": language_update.room_id,
+                            },
+                            sort_keys=True,
+                        )
+                    )
+                    continue
+
+                await manager.update_session_language(
+                    websocket,
+                    language_update.preferred_language,
+                )
+                continue
+
             if payload_type in VOICE_TYPES:
+                if payload_type == "voice_activity":
+                    try:
+                        voice_activity = IncomingVoiceActivityMessage.model_validate(raw_payload)
+                    except ValidationError as exc:
+                        logger.warning(
+                            json.dumps(
+                                {
+                                    "event": "transport.invalid_voice_activity",
+                                    "room_id": room_id,
+                                    "error": str(exc),
+                                },
+                                sort_keys=True,
+                            )
+                        )
+                        continue
+                    if voice_activity.room_id == room_id:
+                        await manager.broadcast_voice_activity(websocket, voice_activity)
+                    continue
+
                 try:
                     voice_chunk = IncomingVoiceChunkMessage.model_validate(raw_payload)
                 except ValidationError as exc:
@@ -239,8 +413,28 @@ async def websocket_room_chat(
         await websocket.close(code=1003, reason="Invalid message payload")
     except ValueError:
         await websocket.close(code=1003, reason="Invalid JSON payload")
-    except WebSocketDisconnect:
-        pass
+    except WebSocketDisconnect as exc:
+        logger.info(
+            json.dumps(
+                {
+                    "event": "transport.websocket_disconnect",
+                    "room_id": room_id,
+                    "code": exc.code,
+                    "reason": exc.reason,
+                },
+                sort_keys=True,
+            )
+        )
+        if registered:
+            reason = f"websocket_disconnect_{exc.code}"
+            if exc.reason:
+                reason = f"{reason}_{exc.reason}"
+            await manager.disconnect(
+                websocket,
+                room_id,
+                reason=reason,
+            )
+            registered = False
     finally:
         if registered:
             await manager.disconnect(websocket, room_id)
@@ -306,3 +500,29 @@ async def room_messages(
         }
         for m in messages
     ]
+
+
+@router.get("/admin/users")
+async def admin_users(
+    _: dict = Depends(require_role("admin")),
+) -> dict:
+    db = get_db()
+    repo = UserRepository(db)
+    users = await repo.list_users(limit=500)
+    distributions = await repo.profile_distributions()
+    return {
+        **distributions,
+        "users": [
+            {
+                "user_id": str(user["_id"]),
+                "name": user.get("name") or user.get("username", ""),
+                "username": user.get("username", ""),
+                "email": user.get("email", ""),
+                "role": user.get("role", "participant"),
+                "preferred_language": user.get("preferred_language", "en"),
+                "pronouns": user.get("pronouns"),
+                "voice_preference": user.get("voice_preference", "auto"),
+            }
+            for user in users
+        ],
+    }

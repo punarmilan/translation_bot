@@ -1,5 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
-import { getMe, login as apiLogin, signup as apiSignup } from "../services/api";
+import {
+  getMe,
+  login as apiLogin,
+  signup as apiSignup,
+  updateMe as apiUpdateMe,
+} from "../services/api";
 
 const AuthContext = createContext(null);
 
@@ -25,24 +30,19 @@ export function AuthProvider({ children }) {
   const login = useCallback(async (email, password) => {
     const data = await apiLogin(email, password);
     localStorage.setItem("access_token", data.access_token);
-    setUser({
-      user_id: data.user_id,
-      username: data.username,
-      role: data.role,
-      preferred_language: data.preferred_language,
-    });
+    const profile = await getMe();
+    setUser(profile);
+    return profile;
+  }, []);
+
+  const signup = useCallback(async (profile) => {
+    const data = await apiSignup(profile);
     return data;
   }, []);
 
-  const signup = useCallback(async (username, email, password, role, preferred_language) => {
-    const data = await apiSignup(username, email, password, role, preferred_language);
-    localStorage.setItem("access_token", data.access_token);
-    setUser({
-      user_id: data.user_id,
-      username: data.username,
-      role: data.role,
-      preferred_language: data.preferred_language,
-    });
+  const updateProfile = useCallback(async (profile) => {
+    const data = await apiUpdateMe(profile);
+    setUser(data);
     return data;
   }, []);
 
@@ -52,7 +52,9 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, signup, logout }}>
+    <AuthContext.Provider
+      value={{ user, loading, login, signup, updateProfile, logout }}
+    >
       {children}
     </AuthContext.Provider>
   );

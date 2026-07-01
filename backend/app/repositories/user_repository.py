@@ -5,7 +5,8 @@ from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 VALID_ROLES = {"admin", "host", "participant"}
-VALID_LANGUAGES = {"en", "hi", "es", "fr", "de", "ja", "mr"}
+VALID_LANGUAGES = {"ar", "de", "en", "es", "fr", "hi", "it", "nl", "pt", "ru"}
+VALID_VOICE_PREFERENCES = {"feminine", "masculine", "neutral", "auto"}
 
 
 class UserRepository:
@@ -18,25 +19,38 @@ class UserRepository:
 
     async def create(
         self,
-        username: str,
+        name: str,
         email: str,
         password_hash: str,
         role: str = "participant",
         preferred_language: str = "en",
+        pronouns: str | None = None,
+        voice_preference: str = "auto",
+        username: str | None = None,
     ) -> dict:
         normalized_role = role.lower().strip()
         normalized_language = preferred_language.lower().strip()
+        normalized_voice = voice_preference.lower().strip()
         if normalized_role not in VALID_ROLES:
             normalized_role = "participant"
         if normalized_language not in VALID_LANGUAGES:
             normalized_language = "en"
+        if normalized_voice not in VALID_VOICE_PREFERENCES:
+            normalized_voice = "auto"
+
+        clean_email = email.lower().strip()
+        clean_name = name.strip()
+        clean_username = username.strip() if username else await self._unique_username(clean_email)
 
         doc = {
-            "username": username.strip(),
-            "email": email.lower().strip(),
+            "name": clean_name,
+            "username": clean_username,
+            "email": clean_email,
             "password_hash": password_hash,
             "role": normalized_role,
             "preferred_language": normalized_language,
+            "pronouns": normalize_optional(pronouns),
+            "voice_preference": normalized_voice,
             "created_at": datetime.utcnow(),
             "last_seen": None,
             "is_online": False,
@@ -70,6 +84,50 @@ class UserRepository:
         cursor = self.collection.find({}, {"password_hash": 0}).sort("created_at", -1).limit(limit)
         return await cursor.to_list(length=limit)
 
+    async def update_profile(
+        self,
+        user_id: str,
+        preferred_language: str,
+        pronouns: str | None,
+        voice_preference: str,
+    ) -> Optional[dict]:
+        normalized_language = preferred_language.lower().strip()
+        normalized_voice = voice_preference.lower().strip()
+        if normalized_language not in VALID_LANGUAGES:
+            normalized_language = "en"
+        if normalized_voice not in VALID_VOICE_PREFERENCES:
+            normalized_voice = "auto"
+
+        await self.collection.update_one(
+            {"_id": ObjectId(user_id)},
+            {
+                "$set": {
+                    "preferred_language": normalized_language,
+                    "pronouns": normalize_optional(pronouns),
+                    "voice_preference": normalized_voice,
+                }
+            },
+        )
+        return await self.get_by_id(user_id)
+
+    async def profile_distributions(self) -> dict:
+        language_rows = await self.collection.aggregate(
+            [{"$group": {"_id": "$preferred_language", "count": {"$sum": 1}}}]
+        ).to_list(length=None)
+        voice_rows = await self.collection.aggregate(
+            [{"$group": {"_id": "$voice_preference", "count": {"$sum": 1}}}]
+        ).to_list(length=None)
+        total = await self.collection.count_documents({})
+        return {
+            "user_count": total,
+            "language_distribution": {
+                row["_id"] or "unknown": row["count"] for row in language_rows
+            },
+            "voice_preference_distribution": {
+                row["_id"] or "auto": row["count"] for row in voice_rows
+            },
+        }
+
     async def update_last_seen(self, user_id: str) -> None:
         await self.collection.update_one(
             {"_id": ObjectId(user_id)},
@@ -81,3 +139,20 @@ class UserRepository:
             {"_id": ObjectId(user_id)},
             {"$set": {"is_online": False, "last_seen": datetime.utcnow()}},
         )
+
+    async def _unique_username(self, email: str) -> str:
+        base = email.split("@", 1)[0].strip().lower() or "user"
+        base = "".join(ch for ch in base if ch.isalnum() or ch in {"_", "-", "."})[:48] or "user"
+        candidate = base
+        suffix = 1
+        while await self.find_by_username(candidate):
+            suffix += 1
+            candidate = f"{base}{suffix}"
+        return candidate
+
+
+def normalize_optional(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None

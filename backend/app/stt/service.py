@@ -12,9 +12,11 @@ from typing import Protocol
 logger = logging.getLogger(__name__)
 
 STT_PROVIDER = os.getenv("STT_PROVIDER", "faster_whisper")
-WHISPER_MODEL = os.getenv("WHISPER_MODEL", "tiny")
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
 WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
 WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
+WHISPER_BEAM_SIZE = int(os.getenv("WHISPER_BEAM_SIZE", "5"))
+WHISPER_VAD_MIN_SILENCE_MS = int(os.getenv("WHISPER_VAD_MIN_SILENCE_MS", "700"))
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
 
@@ -42,6 +44,7 @@ class FasterWhisperProvider:
 
     def __init__(self) -> None:
         self._model = None
+        self._load_latency_ms: int | None = None
 
     def _load_model(self):
         if self._model is not None:
@@ -54,12 +57,37 @@ class FasterWhisperProvider:
                 "faster-whisper is not installed. Install backend requirements and ensure model access."
             ) from exc
 
+        started = perf_counter()
         self._model = WhisperModel(
             WHISPER_MODEL,
             device=WHISPER_DEVICE,
             compute_type=WHISPER_COMPUTE_TYPE,
         )
+        self._load_latency_ms = int((perf_counter() - started) * 1000)
+        logger.info(
+            json.dumps(
+                {
+                    "event": "stt.model_loaded",
+                    "provider": self.name,
+                    "model": WHISPER_MODEL,
+                    "device": WHISPER_DEVICE,
+                    "compute_type": WHISPER_COMPUTE_TYPE,
+                    "beam_size": WHISPER_BEAM_SIZE,
+                    "vad_min_silence_ms": WHISPER_VAD_MIN_SILENCE_MS,
+                    "latency_ms": self._load_latency_ms,
+                },
+                sort_keys=True,
+            )
+        )
         return self._model
+
+    @property
+    def ready(self) -> bool:
+        return self._model is not None
+
+    @property
+    def load_latency_ms(self) -> int | None:
+        return self._load_latency_ms
 
     async def transcribe(self, audio_bytes: bytes, mime_type: str) -> STTResult:
         started = perf_counter()
@@ -84,7 +112,12 @@ class FasterWhisperProvider:
 
     def _transcribe_file(self, audio_path: Path) -> tuple[str, str | None]:
         model = self._load_model()
-        segments, info = model.transcribe(str(audio_path), vad_filter=True, beam_size=1)
+        segments, info = model.transcribe(
+            str(audio_path),
+            vad_filter=True,
+            vad_parameters={"min_silence_duration_ms": WHISPER_VAD_MIN_SILENCE_MS},
+            beam_size=WHISPER_BEAM_SIZE,
+        )
         text = " ".join(segment.text.strip() for segment in segments).strip()
         language = getattr(info, "language", None)
         return text, language
@@ -93,6 +126,49 @@ class FasterWhisperProvider:
 class STTService:
     def __init__(self, provider: STTProvider | None = None) -> None:
         self.provider = provider or FasterWhisperProvider()
+        self._warmup_lock = asyncio.Lock()
+
+    def status(self) -> dict:
+        return {
+            "provider": getattr(self.provider, "name", STT_PROVIDER),
+            "model": WHISPER_MODEL,
+            "device": WHISPER_DEVICE,
+            "compute_type": WHISPER_COMPUTE_TYPE,
+            "beam_size": WHISPER_BEAM_SIZE,
+            "vad_min_silence_ms": WHISPER_VAD_MIN_SILENCE_MS,
+            "ready": bool(getattr(self.provider, "ready", False)),
+            "load_latency_ms": getattr(self.provider, "load_latency_ms", None),
+        }
+
+    async def warmup(self) -> dict:
+        async with self._warmup_lock:
+            started = perf_counter()
+            try:
+                load_model = getattr(self.provider, "_load_model")
+                await asyncio.to_thread(load_model)
+            except Exception as exc:
+                logger.warning(
+                    json.dumps(
+                        {
+                            "event": "stt.warmup_failure",
+                            "provider": getattr(self.provider, "name", STT_PROVIDER),
+                            "model": WHISPER_MODEL,
+                            "error": str(exc),
+                        },
+                        sort_keys=True,
+                    )
+                )
+                raise
+
+            payload = self.status()
+            payload["warmup_latency_ms"] = int((perf_counter() - started) * 1000)
+            logger.info(
+                json.dumps(
+                    {"event": "stt.warmup_success", **payload},
+                    sort_keys=True,
+                )
+            )
+            return payload
 
     async def transcribe(self, audio_bytes: bytes, mime_type: str) -> STTResult:
         try:

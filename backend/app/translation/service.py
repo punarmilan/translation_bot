@@ -25,13 +25,16 @@ LANGUAGE_ALIASES = {
 }
 
 LANGUAGE_NAMES = {
+    "ar": "Arabic",
     "de": "German",
     "en": "English",
     "es": "Spanish",
     "fr": "French",
     "hi": "Hindi",
-    "ja": "Japanese",
-    "mr": "Marathi",
+    "it": "Italian",
+    "nl": "Dutch",
+    "pt": "Portuguese",
+    "ru": "Russian",
 }
 SUPPORTED_LANGUAGES = set(LANGUAGE_NAMES)
 
@@ -66,6 +69,15 @@ class TranslationResult:
     error: str | None = None
     cache_hit: bool = False
     mixed_language: bool = False
+
+
+@dataclass(frozen=True)
+class TranslationContext:
+    speaker_language: str
+    target_language: str
+    speaker_pronouns: str | None = None
+    speaker_voice_preference: str | None = None
+    speaker_session_id: str | None = None
 
 
 class TranslationProvider(Protocol):
@@ -142,6 +154,21 @@ class LibreTranslateProvider:
 
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
             response = await client.post(f"{self.base_url}/translate", json=payload)
+            if response.status_code == 400 and source_lang != "auto":
+                payload["source"] = "auto"
+                logger.info(
+                    json.dumps(
+                        {
+                            "event": "translation.provider_retry",
+                            "provider": self.name,
+                            "original_source_language": source_lang,
+                            "retry_source_language": "auto",
+                            "target_language": target_lang,
+                        },
+                        sort_keys=True,
+                    )
+                )
+                response = await client.post(f"{self.base_url}/translate", json=payload)
             response.raise_for_status()
             response_payload = response.json()
 
@@ -173,6 +200,7 @@ class TranslationService:
         target_lang: str,
         source_lang: str = "auto",
         mixed_language: bool = False,
+        context: TranslationContext | None = None,
     ) -> TranslationResult:
         source = normalize_language(source_lang)
         target = normalize_language(target_lang)
@@ -211,6 +239,9 @@ class TranslationService:
             target_language=target,
             provider=self.provider.name,
             mixed_language=mixed_language,
+            speaker_pronouns=context.speaker_pronouns if context else None,
+            speaker_voice_preference=context.speaker_voice_preference if context else None,
+            speaker_session_id=context.speaker_session_id if context else None,
         )
 
         try:
@@ -462,10 +493,12 @@ async def translate_text(
     target_lang: str,
     source_lang: str = "auto",
     mixed_language: bool = False,
+    context: TranslationContext | None = None,
 ) -> TranslationResult:
     return await translation_service.translate_text(
         text=text,
         target_lang=target_lang,
         source_lang=source_lang,
         mixed_language=mixed_language,
+        context=context,
     )

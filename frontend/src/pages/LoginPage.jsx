@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { parseApiError } from "../services/api";
 
 export default function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [form, setForm] = useState({ email: "", password: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -22,7 +23,7 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await login(form.email, form.password);
-      navigate("/chat");
+      navigate(`/chat${location.search}`);
     } catch (err) {
       setError(parseApiError(err) || "Login failed. Please try again.");
     } finally {
@@ -35,15 +36,15 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
-          <Link to="/" className="text-2xl font-bold text-brand-bg tracking-tight">
-            Translation_Bot
+          <Link to="/" className="text-lg font-semibold text-brand-bg">
+            Translation Bot
           </Link>
           <p className="text-brand-bg/50 mt-2 text-sm">Welcome back</p>
         </div>
 
         <form
           onSubmit={handleSubmit}
-          className="bg-brand-mid rounded-2xl p-8 shadow-2xl border border-white/10"
+          className="rounded-panel border border-white/[0.06] bg-brand-mid p-8 shadow-panel"
         >
           <h1 className="text-xl font-semibold text-brand-bg mb-6">Sign in to your account</h1>
 
@@ -68,7 +69,7 @@ export default function LoginPage() {
               value={form.email}
               onChange={handleChange}
               placeholder="you@example.com"
-              className="w-full bg-brand-dark border border-white/10 rounded-lg px-4 py-3 text-brand-bg text-sm outline-none placeholder:text-brand-bg/30 focus:border-brand-accent transition"
+              className="ui-input text-sm"
             />
           </label>
 
@@ -83,21 +84,24 @@ export default function LoginPage() {
               value={form.password}
               onChange={handleChange}
               placeholder="********"
-              className="w-full bg-brand-dark border border-white/10 rounded-lg px-4 py-3 text-brand-bg text-sm outline-none placeholder:text-brand-bg/30 focus:border-brand-accent transition"
+              className="ui-input text-sm"
             />
           </label>
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-brand-accent text-brand-bg py-3 rounded-lg text-sm font-semibold hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition"
+            className="w-full rounded-control bg-brand-accent py-3 text-sm font-semibold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {loading ? "Signing in..." : "Sign in"}
           </button>
 
           <p className="mt-6 text-center text-sm text-brand-bg/50">
             No account?{" "}
-            <Link to="/signup" className="text-brand-accent hover:underline font-medium">
+            <Link
+              to={`/signup${location.search}`}
+              className="text-brand-accent hover:underline font-medium"
+            >
               Create one free
             </Link>
           </p>

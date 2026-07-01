@@ -1,20 +1,39 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Navigate } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
+import DiagnosticsPanel from "../components/DiagnosticsPanel";
+import TranslationPanel from "../components/TranslationPanel";
+import VideoCall from "../components/VideoCall";
 import { useAuth } from "../contexts/AuthContext";
-import { getAdminUsers, getAllRoomStats, parseApiError } from "../services/api";
+import {
+  getAdminUsers,
+  getAllRoomStats,
+  parseApiError,
+  synthesizeTts,
+  warmupStt,
+} from "../services/api";
 
 const API_HOST = window.location.hostname || "localhost";
 const WS_PROTOCOL = window.location.protocol === "https:" ? "wss" : "ws";
 const WS_BASE_URL = `${WS_PROTOCOL}://${API_HOST}:8000/ws`;
 const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+const VOICE_ACTIVITY_SAMPLE_MS = 100;
+const VOICE_SILENCE_MS = 1100;
+const VOICE_MIN_UTTERANCE_MS = 500;
+const VOICE_MAX_UTTERANCE_MS = 15000;
+const VOICE_IDLE_RESET_MS = 5000;
+const VOICE_RMS_THRESHOLD = 0.018;
 
 const LANGUAGE_OPTIONS = [
+  { label: "Arabic", value: "ar" },
+  { label: "Dutch", value: "nl" },
   { label: "English", value: "en" },
+  { label: "German", value: "de" },
   { label: "Hindi", value: "hi" },
+  { label: "Italian", value: "it" },
+  { label: "Portuguese", value: "pt" },
+  { label: "Russian", value: "ru" },
   { label: "Spanish", value: "es" },
   { label: "French", value: "fr" },
-  { label: "German", value: "de" },
-  { label: "Japanese", value: "ja" },
 ];
 
 const SIGNALING_TYPES = new Set([
@@ -41,11 +60,41 @@ function avatarInitials(name) {
     .slice(0, 2);
 }
 
-function JoinForm({ user, onJoin }) {
+function createClientId() {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function createMeetingCode() {
+  const alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
+  const group = (length) =>
+    Array.from({ length }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
+  return `${group(3)}-${group(4)}-${group(3)}`;
+}
+
+async function copyText(value) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const input = document.createElement("textarea");
+  input.value = value;
+  input.style.position = "fixed";
+  input.style.opacity = "0";
+  document.body.appendChild(input);
+  input.select();
+  document.execCommand("copy");
+  input.remove();
+}
+
+function JoinForm({ user, onJoin, initialRoomId = "" }) {
   const [form, setForm] = useState({
-    roomId: "",
+    roomId: initialRoomId,
     userLang: user.preferred_language || "en",
   });
+  const [shareStatus, setShareStatus] = useState("");
 
   const canJoin = form.roomId.trim();
 
@@ -62,15 +111,15 @@ function JoinForm({ user, onJoin }) {
             role: user.role,
           });
         }}
-        className="w-full max-w-md bg-brand-mid rounded-2xl p-8 border border-white/10 shadow-2xl"
+        className="w-full max-w-md rounded-panel border border-white/[0.06] bg-brand-mid p-8 shadow-panel"
       >
-        <h1 className="text-xl font-semibold text-brand-bg mb-1">Join a Room</h1>
-        <p className="text-brand-bg/50 text-sm mb-7">
-          You are signed in as {user.username}. Pick a room and language.
+        <h1 className="mb-1 text-[28px] font-semibold text-brand-bg">Join a room</h1>
+        <p className="mb-7 text-sm text-ui-muted">
+          You are signed in as {user.name || user.username}. Pick a room and language.
         </p>
 
         <label className="block mb-4">
-          <span className="text-xs font-semibold uppercase tracking-wide text-brand-bg/50 block mb-1.5">
+          <span className="mb-1.5 block text-xs font-medium text-ui-muted">
             Room ID
           </span>
           <input
@@ -78,14 +127,44 @@ function JoinForm({ user, onJoin }) {
             onChange={(event) =>
               setForm((current) => ({ ...current, roomId: event.target.value }))
             }
-            className="w-full bg-brand-dark border border-white/10 rounded-lg px-4 py-3 text-brand-bg text-sm outline-none placeholder:text-brand-bg/30 focus:border-brand-accent transition"
+            className="ui-input text-sm"
             placeholder="team-room-1"
           />
         </label>
 
-        <div className="grid grid-cols-2 gap-4 mb-7">
+        {(user.role === "host" || user.role === "admin") && (
+          <button
+            type="button"
+            onClick={async () => {
+              const roomId = createMeetingCode();
+              const publicOrigin =
+                import.meta.env.VITE_PUBLIC_APP_URL || window.location.origin;
+              const meetingUrl = `${publicOrigin.replace(
+                /\/$/,
+                ""
+              )}/chat?room=${encodeURIComponent(roomId)}`;
+              setForm((current) => ({ ...current, roomId }));
+              try {
+                await copyText(meetingUrl);
+                setShareStatus("Meeting link copied. Join when ready.");
+              } catch {
+                setShareStatus("Meeting code generated.");
+              }
+            }}
+            className="mb-4 w-full rounded-control bg-ui-elevated px-4 py-2.5 text-sm font-semibold text-brand-accent hover:bg-white/[0.08]"
+          >
+            Generate meeting link
+          </button>
+        )}
+        {shareStatus && (
+          <p className="mb-4 text-xs text-ui-success" role="status">
+            {shareStatus}
+          </p>
+        )}
+
+        <div className="mb-7 grid gap-4 sm:grid-cols-2">
           <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-wide text-brand-bg/50 block mb-1.5">
+            <span className="mb-1.5 block text-xs font-medium text-ui-muted">
               Language
             </span>
             <select
@@ -93,7 +172,7 @@ function JoinForm({ user, onJoin }) {
               onChange={(event) =>
                 setForm((current) => ({ ...current, userLang: event.target.value }))
               }
-              className="w-full bg-brand-dark border border-white/10 rounded-lg px-4 py-3 text-brand-bg text-sm outline-none focus:border-brand-accent transition"
+              className="ui-input text-sm"
             >
               {LANGUAGE_OPTIONS.map((language) => (
                 <option key={language.value} value={language.value}>
@@ -104,13 +183,13 @@ function JoinForm({ user, onJoin }) {
           </label>
 
           <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-wide text-brand-bg/50 block mb-1.5">
+            <span className="mb-1.5 block text-xs font-medium text-ui-muted">
               Role
             </span>
             <input
               value={user.role}
               disabled
-              className="w-full bg-brand-dark border border-white/10 rounded-lg px-4 py-3 text-brand-bg/70 text-sm outline-none cursor-not-allowed capitalize"
+              className="ui-input cursor-not-allowed text-sm capitalize opacity-60"
             />
           </label>
         </div>
@@ -118,7 +197,7 @@ function JoinForm({ user, onJoin }) {
         <button
           type="submit"
           disabled={!canJoin}
-          className="w-full bg-brand-accent text-brand-bg py-3 rounded-lg text-sm font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition"
+          className="w-full rounded-control bg-brand-accent py-3 text-sm font-semibold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Join Room
         </button>
@@ -127,24 +206,29 @@ function JoinForm({ user, onJoin }) {
   );
 }
 
-function MemberCard({ member, isSelf, connected }) {
+function MemberCard({ member, isSelf, connected, translationStatus }) {
   return (
-    <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/5 transition">
-      <div className="w-9 h-9 rounded-full bg-brand-accent/20 flex items-center justify-center text-brand-accent text-xs font-bold flex-shrink-0">
+    <div className="flex items-center gap-3 rounded-control px-2.5 py-2.5 hover:bg-white/[0.04]">
+      <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-ui-elevated text-xs font-semibold text-ui-muted">
         {avatarInitials(member.username)}
       </div>
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium text-brand-bg truncate">
-          {member.username}
+          {member.name || member.username}
           {isSelf && <span className="text-brand-bg/40 text-xs ml-1">(you)</span>}
         </p>
-        <p className="text-xs text-brand-bg/40 capitalize">
+        <p className="text-xs capitalize text-ui-subtle">
           {member.role} - {member.preferred_language}
         </p>
+        {translationStatus && (
+          <p className="mt-1 text-[11px] font-medium text-brand-accent" aria-live="polite">
+            {translationStatus}
+          </p>
+        )}
       </div>
       {connected && (
-        <span className="text-[10px] rounded-full bg-emerald-500/15 text-emerald-300 px-2 py-1">
-          audio
+        <span className="rounded-full bg-ui-success/10 px-2 py-1 text-[10px] text-ui-success">
+          Live
         </span>
       )}
     </div>
@@ -166,9 +250,9 @@ function CallPanel({
   onToggleMute,
 }) {
   return (
-    <div className="mt-4 rounded-xl bg-brand-dark/60 border border-white/10 p-4">
-      <p className="text-xs uppercase tracking-widest font-semibold text-brand-bg/40 mb-2">
-        Audio Room
+    <div className="mt-4 rounded-panel bg-brand-mid p-4">
+      <p className="mb-2 text-xs font-medium text-ui-muted">
+        Meeting details
       </p>
       <p className="text-sm font-medium text-brand-bg">{callStatus}</p>
       <p className="mt-1 text-xs text-brand-bg/40">
@@ -181,7 +265,7 @@ function CallPanel({
           <button
             type="button"
             onClick={onStart}
-            className="bg-emerald-500/20 text-emerald-300 text-xs font-semibold py-2 rounded-lg hover:bg-emerald-500/30 transition"
+            className="rounded-control bg-brand-accent py-2 text-xs font-semibold text-white hover:brightness-110"
           >
             Start Audio Call
           </button>
@@ -191,7 +275,7 @@ function CallPanel({
           <button
             type="button"
             onClick={onJoin}
-            className="bg-brand-accent text-brand-bg text-xs font-semibold py-2 rounded-lg hover:opacity-90 transition"
+            className="rounded-control bg-brand-accent py-2 text-xs font-semibold text-white hover:brightness-110"
           >
             Join Call
           </button>
@@ -201,7 +285,7 @@ function CallPanel({
           <button
             type="button"
             onClick={onJoin}
-            className="bg-brand-accent text-brand-bg text-xs font-semibold py-2 rounded-lg hover:opacity-90 transition"
+            className="rounded-control bg-brand-accent py-2 text-xs font-semibold text-white hover:brightness-110"
           >
             Rejoin Call
           </button>
@@ -212,14 +296,14 @@ function CallPanel({
             <button
               type="button"
               onClick={onToggleMute}
-              className="flex-1 border border-white/10 text-brand-bg/70 text-xs font-semibold py-2 rounded-lg hover:border-white/20 transition"
+              className="flex-1 rounded-control bg-ui-elevated py-2 text-xs font-semibold text-ui-muted hover:text-brand-bg"
             >
               {isMuted ? "Unmute" : "Mute"}
             </button>
             <button
               type="button"
               onClick={onLeave}
-              className="flex-1 bg-red-500/20 text-red-300 text-xs font-semibold py-2 rounded-lg hover:bg-red-500/30 transition"
+              className="flex-1 rounded-control bg-ui-error/10 py-2 text-xs font-semibold text-ui-error hover:bg-ui-error/20"
             >
               Leave Call
             </button>
@@ -232,9 +316,9 @@ function CallPanel({
 
 function AdminPanel({ users, stats, loading, error, onRefresh }) {
   return (
-    <div className="mt-4 rounded-xl bg-brand-dark/60 border border-white/10 p-4">
+    <div className="rounded-panel bg-brand-mid p-4">
       <div className="flex items-center justify-between gap-3 mb-3">
-        <p className="text-xs uppercase tracking-widest font-semibold text-brand-bg/40">
+        <p className="text-sm font-semibold text-brand-bg">
           Admin
         </p>
         <button type="button" onClick={onRefresh} className="text-xs text-brand-accent">
@@ -247,73 +331,22 @@ function AdminPanel({ users, stats, loading, error, onRefresh }) {
         <p className="text-xs text-red-300">{error}</p>
       ) : (
         <div className="space-y-2">
-          <p className="text-sm text-brand-bg">{users.length} registered users</p>
+          <p className="text-sm text-brand-bg">
+            {(users.users || users).length || users.user_count || 0} registered users
+          </p>
+          {users.language_distribution && (
+            <p className="text-xs text-brand-bg/40">
+              Languages: {Object.entries(users.language_distribution).map(([key, value]) => `${key} ${value}`).join(", ")}
+            </p>
+          )}
+          {users.voice_preference_distribution && (
+            <p className="text-xs text-brand-bg/40">
+              Voices: {Object.entries(users.voice_preference_distribution).map(([key, value]) => `${key} ${value}`).join(", ")}
+            </p>
+          )}
           <p className="text-sm text-brand-bg">{stats.length} active rooms</p>
         </div>
       )}
-    </div>
-  );
-}
-
-function TranscriptPanel({
-  transcripts,
-  enabled,
-  error,
-  status,
-  onStart,
-  onStop,
-}) {
-  return (
-    <div className="mt-4 rounded-xl bg-brand-dark/60 border border-white/10 p-4">
-      <div className="flex items-center justify-between gap-3 mb-3">
-        <p className="text-xs uppercase tracking-widest font-semibold text-brand-bg/40">
-          Live Translation
-        </p>
-        <button
-          type="button"
-          onClick={enabled ? onStop : onStart}
-          className={`text-xs font-semibold px-2.5 py-1 rounded-lg ${
-            enabled
-              ? "bg-red-500/20 text-red-300"
-              : "bg-brand-accent text-brand-bg"
-          }`}
-        >
-          {enabled ? "Stop" : "Start"}
-        </button>
-      </div>
-      {error && <p className="mb-2 text-xs text-red-300">{error}</p>}
-      {status && <p className="mb-2 text-xs text-brand-bg/50">{status}</p>}
-      <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
-        {transcripts.length === 0 ? (
-          <p className="text-xs text-brand-bg/40">
-            Start live translation and speak into your microphone.
-          </p>
-        ) : (
-          transcripts.map((item) => (
-            <div key={item.id} className="rounded-lg bg-brand-mid/50 p-3">
-              <div className="flex items-center justify-between gap-2 mb-2">
-                <p className="text-xs font-semibold text-brand-accent">
-                  {item.sender}
-                </p>
-                <p className="text-[10px] text-brand-bg/40">
-                  {item.total_latency_ms}ms
-                </p>
-              </div>
-              <p className="text-[11px] uppercase tracking-wide text-brand-bg/40">
-                Original ({item.detected_language})
-              </p>
-              <p className="text-sm text-brand-bg">{item.original}</p>
-              <p className="mt-2 text-[11px] uppercase tracking-wide text-brand-bg/40">
-                Translated ({item.target_language})
-              </p>
-              <p className="text-sm text-brand-bg">{item.translated}</p>
-              <p className="mt-2 text-[10px] text-brand-bg/40">
-                STT {item.stt_latency_ms}ms - Translation {item.translation_latency_ms}ms
-              </p>
-            </div>
-          ))
-        )}
-      </div>
     </div>
   );
 }
@@ -322,7 +355,7 @@ function MessageBubble({ message, isMine, showTranslationDebug }) {
   if (message.type === "system") {
     return (
       <div className="flex justify-center py-1">
-        <span className="bg-brand-mid/40 text-brand-bg/50 text-xs px-3 py-1 rounded-full">
+        <span className="rounded-full bg-white/[0.04] px-3 py-1 text-xs text-ui-subtle">
           {message.text} - {formatTime(message.timestamp)}
         </span>
       </div>
@@ -330,16 +363,16 @@ function MessageBubble({ message, isMine, showTranslationDebug }) {
   }
 
   return (
-    <div className={`flex ${isMine ? "justify-end" : "justify-start"}`}>
+    <div className={`flex gap-2 ${isMine ? "justify-end" : "justify-start"}`}>
       <div
-        className={`max-w-[80%] rounded-2xl px-4 py-3 shadow-sm ${
+        className={`max-w-[82%] rounded-panel px-4 py-3 ${
           isMine
-            ? "bg-brand-accent text-brand-bg rounded-br-sm"
-            : "bg-brand-mid text-brand-bg rounded-bl-sm"
+            ? "bg-brand-accent text-white"
+            : "bg-brand-mid text-brand-bg"
         }`}
       >
         <div className="flex items-center gap-2 mb-1.5">
-          <span className={`text-xs font-semibold ${isMine ? "text-brand-bg/80" : "text-brand-accent"}`}>
+          <span className={`text-xs font-semibold ${isMine ? "text-white/80" : "text-ui-muted"}`}>
             {message.sender}
           </span>
           {message.delivery_mode === "direct" && (
@@ -347,13 +380,15 @@ function MessageBubble({ message, isMine, showTranslationDebug }) {
               Private{message.target_name ? ` to ${message.target_name}` : ""}
             </span>
           )}
-          <span className="text-[10px] text-brand-bg/40 ml-auto">
+          <span className={`ml-auto text-[10px] ${isMine ? "text-white/55" : "text-ui-subtle"}`}>
             {formatTime(message.timestamp)}
           </span>
         </div>
         <p className="text-sm leading-relaxed">{message.translated}</p>
         {message.original !== message.translated && (
-          <p className="mt-1.5 pt-1.5 border-t border-white/10 text-[11px] text-brand-bg/40 leading-relaxed">
+          <p className={`mt-2 border-t pt-2 text-xs leading-relaxed ${
+            isMine ? "border-white/15 text-white/60" : "border-white/[0.06] text-ui-muted"
+          }`}>
             {message.original}
           </p>
         )}
@@ -370,26 +405,43 @@ function MessageBubble({ message, isMine, showTranslationDebug }) {
 
 export default function ChatPage() {
   const { user, logout, loading } = useAuth();
+  const [searchParams] = useSearchParams();
 
   const [session, setSession] = useState(null);
   const [messages, setMessages] = useState([]);
   const [members, setMembers] = useState([]);
   const [draft, setDraft] = useState("");
   const [isConnected, setIsConnected] = useState(false);
+  const [connectionError, setConnectionError] = useState("");
   const [sessionId, setSessionId] = useState(null);
+  const [activeLanguage, setActiveLanguage] = useState(user?.preferred_language || "en");
   const [userRole, setUserRole] = useState("participant");
   const [selectedRecipient, setSelectedRecipient] = useState("all");
   const [callActive, setCallActive] = useState(false);
   const [callHostId, setCallHostId] = useState(null);
   const [inCall, setInCall] = useState(false);
+  const [isVideoCall, setIsVideoCall] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  const [isCameraOff, setIsCameraOff] = useState(false);
   const [callError, setCallError] = useState("");
   const [transcriptionEnabled, setTranscriptionEnabled] = useState(false);
   const [transcriptionError, setTranscriptionError] = useState("");
   const [transcriptionStatus, setTranscriptionStatus] = useState("");
+  const [ttsStatus, setTtsStatus] = useState("");
+  const [playingTranscriptId, setPlayingTranscriptId] = useState(null);
   const [transcripts, setTranscripts] = useState([]);
+  const [translatedAudioItems, setTranslatedAudioItems] = useState([]);
+  const [participantTranslationStatus, setParticipantTranslationStatus] = useState({});
+  const [listenerMode, setListenerMode] = useState("original_translated_audio");
   const [connectedPeerIds, setConnectedPeerIds] = useState([]);
+  const [localMediaStream, setLocalMediaStream] = useState(null);
   const [remoteStreams, setRemoteStreams] = useState({});
+  const [diagnostics, setDiagnostics] = useState({
+    websocketStatus: "idle",
+    reconnectAttempts: 0,
+    lastEvent: "",
+  });
+  const [peerDiagnostics, setPeerDiagnostics] = useState({});
   const [adminUsers, setAdminUsers] = useState([]);
   const [adminStats, setAdminStats] = useState([]);
   const [adminLoading, setAdminLoading] = useState(false);
@@ -397,6 +449,7 @@ export default function ChatPage() {
   const [showTranslationDebug, setShowTranslationDebug] = useState(() => {
     return localStorage.getItem("translation_debug") === "true";
   });
+  const [shareStatus, setShareStatus] = useState("");
 
   const socketRef = useRef(null);
   const listEndRef = useRef(null);
@@ -406,12 +459,22 @@ export default function ChatPage() {
   const pendingIceCandidatesRef = useRef(new Map());
   const mediaRecorderRef = useRef(null);
   const transcriptionIntervalRef = useRef(null);
+  const transcriptionActiveRef = useRef(false);
+  const transcriptionAudioContextRef = useRef(null);
+  const reconnectTimerRef = useRef(null);
+  const intentionalCloseRef = useRef(false);
+  const reconnectAttemptsRef = useRef(0);
+  const pendingCallRecoveryRef = useRef(null);
   const voiceSequenceRef = useRef(0);
   const sessionIdRef = useRef(null);
   const membersRef = useRef([]);
+  const activeLanguageRef = useRef(user?.preferred_language || "en");
+  const listenerModeRef = useRef("original_translated_audio");
   const callHostIdRef = useRef(null);
   const inCallRef = useRef(false);
   const isMutedRef = useRef(false);
+  const isCameraOffRef = useRef(false);
+  const isVideoCallRef = useRef(false);
 
   const directTargets = useMemo(() => {
     return members.filter((member) => {
@@ -426,6 +489,7 @@ export default function ChatPage() {
       .map((peerId) => members.find((member) => member.session_id === peerId))
       .filter(Boolean);
   }, [connectedPeerIds, members]);
+  const originalAudioMuted = listenerMode === "translated_audio_only";
 
   const callStatus = useMemo(() => {
     if (!callActive) return "No active audio call";
@@ -447,6 +511,22 @@ export default function ChatPage() {
       target_session_id: targetSessionId,
       payload,
     });
+  };
+
+  const noteDiagnostic = (lastEvent, fields = {}) => {
+    setDiagnostics((current) => ({ ...current, ...fields, lastEvent }));
+  };
+
+  const updatePeerDiagnostic = (peerId, patch) => {
+    const member = memberFor(peerId);
+    setPeerDiagnostics((current) => ({
+      ...current,
+      [peerId]: {
+        name: member.name || member.username,
+        ...(current[peerId] || {}),
+        ...patch,
+      },
+    }));
   };
 
   const blobToBase64 = (blob) => {
@@ -481,26 +561,57 @@ export default function ChatPage() {
     });
   };
 
-  const ensureLocalAudio = async () => {
-    if (localStreamRef.current) return localStreamRef.current;
+  const ensureLocalMedia = async ({ video = false } = {}) => {
+    const current = localStreamRef.current;
+    const hasVideo = current?.getVideoTracks().some((track) => track.readyState === "live");
+    if (current && (!video || hasVideo)) return current;
+    current?.getTracks().forEach((track) => track.stop());
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: true,
-      video: false,
+      video,
     });
     localStreamRef.current = stream;
+    setLocalMediaStream(stream);
+    noteDiagnostic(video ? "local video stream ready" : "local audio stream ready");
     stream.getAudioTracks().forEach((track) => {
       track.enabled = !isMutedRef.current;
+      track.onended = () => noteDiagnostic("local audio track ended");
+      track.onmute = () => noteDiagnostic("local audio track muted");
+      track.onunmute = () => noteDiagnostic("local audio track unmuted");
+    });
+    stream.getVideoTracks().forEach((track) => {
+      track.enabled = !isCameraOffRef.current;
+      track.onended = () => noteDiagnostic("local video track ended");
+      track.onmute = () => noteDiagnostic("local video track muted");
+      track.onunmute = () => noteDiagnostic("local video track unmuted");
     });
     return stream;
   };
 
+  const ensureLocalAudio = () => ensureLocalMedia({ video: false });
+  const ensureLocalVideo = () => ensureLocalMedia({ video: true });
+
   const stopVoiceTranscription = () => {
+    transcriptionActiveRef.current = false;
     if (transcriptionIntervalRef.current) {
       clearInterval(transcriptionIntervalRef.current);
       transcriptionIntervalRef.current = null;
     }
+    if (transcriptionAudioContextRef.current) {
+      transcriptionAudioContextRef.current.close().catch(() => {});
+      transcriptionAudioContextRef.current = null;
+    }
     const recorder = mediaRecorderRef.current;
     if (recorder && recorder.state !== "inactive") {
+      if (recorder.__activitySent) {
+        sendSocketMessage({
+          type: "voice_activity",
+          room_id: session?.roomId,
+          active: false,
+          sequence: voiceSequenceRef.current,
+        });
+      }
+      recorder.__sendSegment = Boolean(recorder.__speechDetected);
       recorder.stop();
     }
     mediaRecorderRef.current = null;
@@ -508,36 +619,74 @@ export default function ChatPage() {
     setTranscriptionStatus("");
   };
 
-  const startVoiceTranscription = async () => {
+  const startVoiceTranscription = async (existingStream = null) => {
+    if (transcriptionActiveRef.current) return;
     try {
+      transcriptionActiveRef.current = true;
       setTranscriptionError("");
-      setTranscriptionStatus("Listening...");
-      const stream = await ensureLocalAudio();
+      if (!window.isSecureContext && window.location.hostname !== "localhost") {
+        setTranscriptionError(
+          "Microphone access needs HTTPS on another device. Use localhost, HTTPS, or allow this LAN origin in your browser."
+        );
+        transcriptionActiveRef.current = false;
+        return;
+      }
+
+      setTranscriptionStatus("Preparing Whisper speech-to-text...");
+      await warmupStt();
+      setTranscriptionStatus("Listening... speak in full sentences.");
+      const stream = existingStream || (await ensureLocalAudio());
+      const audioTracks = stream.getAudioTracks().filter(
+        (track) => track.readyState === "live"
+      );
+      if (audioTracks.length === 0) {
+        throw new Error("No active microphone track is available for live translation.");
+      }
+      const transcriptionStream = new MediaStream(audioTracks);
       const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
         ? "audio/webm;codecs=opus"
         : "audio/webm";
       voiceSequenceRef.current = 0;
 
-      const sendAudioBlob = async (event) => {
-        if (!event.data || event.data.size === 0) return;
+      const sendAudioBlob = async (blob) => {
+        if (!blob || blob.size === 0) return;
         if (socketRef.current?.readyState !== WebSocket.OPEN) return;
-        const audioBase64 = await blobToBase64(event.data);
+        const audioBase64 = await blobToBase64(blob);
         sendSocketMessage({
           type: "voice_chunk",
           room_id: session?.roomId,
           audio_base64: audioBase64,
-          mime_type: event.data.type || mimeType,
+          mime_type: blob.type || mimeType,
           sequence: voiceSequenceRef.current,
           captured_at: new Date().toISOString(),
         });
         voiceSequenceRef.current += 1;
-        setTranscriptionStatus(`Audio chunk ${voiceSequenceRef.current} sent. Waiting for transcript...`);
+        setTranscriptionStatus("Transcribing...");
       };
 
       const startSegmentRecorder = () => {
-        const recorder = new MediaRecorder(stream, { mimeType });
+        if (!transcriptionActiveRef.current) return;
+        const chunks = [];
+        const recorder = new MediaRecorder(transcriptionStream, { mimeType });
+        recorder.__startedAt = performance.now();
+        recorder.__lastSpeechAt = 0;
+        recorder.__speechDetected = false;
+        recorder.__sendSegment = false;
+        recorder.__activitySent = false;
         mediaRecorderRef.current = recorder;
-        recorder.ondataavailable = sendAudioBlob;
+        recorder.ondataavailable = (event) => {
+          if (event.data?.size) chunks.push(event.data);
+        };
+        recorder.onstop = () => {
+          if (recorder.__sendSegment && chunks.length > 0) {
+            const blob = new Blob(chunks, { type: recorder.mimeType || mimeType });
+            void sendAudioBlob(blob);
+          }
+          if (transcriptionActiveRef.current) {
+            startSegmentRecorder();
+            setTranscriptionStatus("Listening...");
+          }
+        };
         recorder.onerror = () => {
           setTranscriptionError("Could not record microphone audio.");
           stopVoiceTranscription();
@@ -546,18 +695,76 @@ export default function ChatPage() {
       };
 
       startSegmentRecorder();
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      const audioContext = new AudioContextClass();
+      transcriptionAudioContextRef.current = audioContext;
+      if (audioContext.state === "suspended") await audioContext.resume();
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.15;
+      audioContext.createMediaStreamSource(transcriptionStream).connect(analyser);
+      const samples = new Float32Array(analyser.fftSize);
+
       transcriptionIntervalRef.current = window.setInterval(() => {
         const recorder = mediaRecorderRef.current;
         if (!recorder || recorder.state === "inactive") return;
-        recorder.onstop = () => {
-          if (transcriptionIntervalRef.current) startSegmentRecorder();
-        };
-        recorder.stop();
-      }, 4000);
+        analyser.getFloatTimeDomainData(samples);
+        const rms = Math.sqrt(
+          samples.reduce((sum, sample) => sum + sample * sample, 0) / samples.length
+        );
+        const now = performance.now();
+        const elapsed = now - recorder.__startedAt;
+
+        if (rms >= VOICE_RMS_THRESHOLD) {
+          recorder.__speechDetected = true;
+          recorder.__lastSpeechAt = now;
+          if (!recorder.__activitySent) {
+            recorder.__activitySent = true;
+            sendSocketMessage({
+              type: "voice_activity",
+              room_id: session?.roomId,
+              active: true,
+              sequence: voiceSequenceRef.current,
+            });
+          }
+          setTranscriptionStatus("Listening...");
+          return;
+        }
+
+        const silenceDuration = recorder.__lastSpeechAt
+          ? now - recorder.__lastSpeechAt
+          : 0;
+        const utteranceComplete =
+          recorder.__speechDetected &&
+          elapsed >= VOICE_MIN_UTTERANCE_MS &&
+          silenceDuration >= VOICE_SILENCE_MS;
+        const maximumReached =
+          recorder.__speechDetected && elapsed >= VOICE_MAX_UTTERANCE_MS;
+        const idleReset =
+          !recorder.__speechDetected && elapsed >= VOICE_IDLE_RESET_MS;
+
+        if (utteranceComplete || maximumReached || idleReset) {
+          if (recorder.__activitySent) {
+            sendSocketMessage({
+              type: "voice_activity",
+              room_id: session?.roomId,
+              active: false,
+              sequence: voiceSequenceRef.current,
+            });
+          }
+          recorder.__sendSegment = utteranceComplete || maximumReached;
+          recorder.stop();
+        }
+      }, VOICE_ACTIVITY_SAMPLE_MS);
       setTranscriptionEnabled(true);
     } catch (error) {
+      transcriptionActiveRef.current = false;
+      setTranscriptionEnabled(false);
+      setTranscriptionStatus("");
       console.error("Could not start voice transcription", error);
-      setTranscriptionError("Microphone permission is required for live transcripts.");
+      setTranscriptionError(
+        parseApiError(error) || "Microphone permission and a ready STT model are required for live transcripts."
+      );
     }
   };
 
@@ -567,6 +774,10 @@ export default function ChatPage() {
     peerConnectionsRef.current.delete(peerId);
     pendingIceCandidatesRef.current.delete(peerId);
     updateConnectedPeer(peerId, false);
+    updatePeerDiagnostic(peerId, {
+      connectionState: "closed",
+      iceConnectionState: "closed",
+    });
     setRemoteStreams((current) => {
       const next = { ...current };
       delete next[peerId];
@@ -586,21 +797,33 @@ export default function ChatPage() {
     stopVoiceTranscription();
     localStreamRef.current?.getTracks().forEach((track) => track.stop());
     localStreamRef.current = null;
+    setLocalMediaStream(null);
     inCallRef.current = false;
     isMutedRef.current = false;
+    isCameraOffRef.current = false;
+    isVideoCallRef.current = false;
     setInCall(false);
     setIsMuted(false);
+    setIsCameraOff(false);
+    setIsVideoCall(false);
     setConnectedPeerIds([]);
     setRemoteStreams({});
+    setPeerDiagnostics({});
+    noteDiagnostic("call cleaned up");
   };
 
   const createPeerConnection = async (peerId) => {
     const existing = peerConnectionsRef.current.get(peerId);
     if (existing) return existing;
 
-    const localStream = await ensureLocalAudio();
+    const localStream = await ensureLocalMedia({ video: isVideoCallRef.current });
     const connection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     peerConnectionsRef.current.set(peerId, connection);
+    updatePeerDiagnostic(peerId, {
+      connectionState: connection.connectionState,
+      iceConnectionState: connection.iceConnectionState,
+    });
+    noteDiagnostic("peer connection created");
 
     localStream.getTracks().forEach((track) => {
       connection.addTrack(track, localStream);
@@ -609,15 +832,48 @@ export default function ChatPage() {
     connection.onicecandidate = (event) => {
       if (!event.candidate) return;
       console.info("ICE candidate exchange", { target: peerId });
+      setPeerDiagnostics((current) => ({
+        ...current,
+        [peerId]: {
+          ...(current[peerId] || {}),
+          name: current[peerId]?.name || memberFor(peerId).username,
+          iceCandidatesSent: (current[peerId]?.iceCandidatesSent || 0) + 1,
+        },
+      }));
+      noteDiagnostic("ICE candidate sent");
       sendSignal("webrtc_ice_candidate", peerId, {
         candidate: event.candidate.toJSON(),
+      });
+    };
+
+    connection.oniceconnectionstatechange = () => {
+      const state = connection.iceConnectionState;
+      console.info("ICE connection state", { peerId, state });
+      updatePeerDiagnostic(peerId, { iceConnectionState: state });
+      noteDiagnostic(`ICE ${state}`);
+    };
+
+    connection.onicegatheringstatechange = () => {
+      console.info("ICE gathering state", {
+        peerId,
+        state: connection.iceGatheringState,
       });
     };
 
     connection.ontrack = (event) => {
       const [stream] = event.streams;
       if (!stream) return;
+      stream.getTracks().forEach((track) => {
+        track.onended = () => noteDiagnostic(`remote ${track.kind} ended`);
+        track.onmute = () => noteDiagnostic(`remote ${track.kind} muted`);
+        track.onunmute = () => noteDiagnostic(`remote ${track.kind} unmuted`);
+      });
       setRemoteStreams((current) => ({ ...current, [peerId]: stream }));
+      updatePeerDiagnostic(peerId, {
+        remoteAudioTracks: stream.getAudioTracks().length,
+        remoteVideoTracks: stream.getVideoTracks().length,
+      });
+      noteDiagnostic("remote media stream received");
       updateConnectedPeer(peerId, true);
     };
 
@@ -625,10 +881,14 @@ export default function ChatPage() {
       const state = connection.connectionState;
       if (state === "connected") {
         console.info("Peer connected", { peerId });
+        updatePeerDiagnostic(peerId, { connectionState: state });
+        noteDiagnostic("peer connected");
         updateConnectedPeer(peerId, true);
       }
       if (state === "failed" || state === "disconnected" || state === "closed") {
         console.info("Peer disconnected", { peerId, state });
+        updatePeerDiagnostic(peerId, { connectionState: state });
+        noteDiagnostic(`peer ${state}`);
         removePeerConnection(peerId);
       }
     };
@@ -651,14 +911,23 @@ export default function ChatPage() {
     const offer = await connection.createOffer();
     await connection.setLocalDescription(offer);
     console.info("Offer created", { target: peerId });
+    updatePeerDiagnostic(peerId, { localDescription: "offer" });
+    noteDiagnostic("offer created");
     sendSignal("webrtc_offer", peerId, {
       description: connection.localDescription,
+      media_type: isVideoCallRef.current ? "video" : "audio",
     });
   };
 
   const startAudioCall = async () => {
     try {
       setCallError("");
+      if (!window.isSecureContext && window.location.hostname !== "localhost") {
+        setCallError("Microphone access needs HTTPS on another device. Use HTTPS or allow this LAN origin in the browser.");
+        return;
+      }
+      isVideoCallRef.current = false;
+      setIsVideoCall(false);
       await ensureLocalAudio();
       inCallRef.current = true;
       setInCall(true);
@@ -667,7 +936,9 @@ export default function ChatPage() {
       callHostIdRef.current = sessionIdRef.current;
       sendSignal("call_started", null, {
         host_session_id: sessionIdRef.current,
+        media_type: "audio",
       });
+      void startVoiceTranscription(localStreamRef.current);
     } catch (error) {
       console.error("Could not start audio call", error);
       setCallError("Microphone permission is required to start a call.");
@@ -677,6 +948,12 @@ export default function ChatPage() {
   const joinAudioCall = async () => {
     try {
       setCallError("");
+      if (!window.isSecureContext && window.location.hostname !== "localhost") {
+        setCallError("Microphone access needs HTTPS on another device. Use HTTPS or allow this LAN origin in the browser.");
+        return;
+      }
+      isVideoCallRef.current = false;
+      setIsVideoCall(false);
       await ensureLocalAudio();
       inCallRef.current = true;
       setInCall(true);
@@ -684,9 +961,59 @@ export default function ChatPage() {
       if (hostId && hostId !== sessionIdRef.current) {
         await createOfferForPeer(hostId);
       }
+      void startVoiceTranscription(localStreamRef.current);
     } catch (error) {
       console.error("Could not join audio call", error);
       setCallError("Microphone permission is required to join the call.");
+    }
+  };
+
+  const startVideoCall = async () => {
+    try {
+      setCallError("");
+      if (!window.isSecureContext && window.location.hostname !== "localhost") {
+        setCallError("Camera and microphone need HTTPS on another device. Use HTTPS or allow this LAN origin in the browser.");
+        return;
+      }
+      isVideoCallRef.current = true;
+      setIsVideoCall(true);
+      await ensureLocalVideo();
+      inCallRef.current = true;
+      setInCall(true);
+      setCallActive(true);
+      setCallHostId(sessionIdRef.current);
+      callHostIdRef.current = sessionIdRef.current;
+      sendSignal("call_started", null, {
+        host_session_id: sessionIdRef.current,
+        media_type: "video",
+      });
+      void startVoiceTranscription(localStreamRef.current);
+    } catch (error) {
+      console.error("Could not start video call", error);
+      setCallError("Camera and microphone permission are required to start video.");
+    }
+  };
+
+  const joinVideoCall = async () => {
+    try {
+      setCallError("");
+      if (!window.isSecureContext && window.location.hostname !== "localhost") {
+        setCallError("Camera and microphone need HTTPS on another device. Use HTTPS or allow this LAN origin in the browser.");
+        return;
+      }
+      isVideoCallRef.current = true;
+      setIsVideoCall(true);
+      await ensureLocalVideo();
+      inCallRef.current = true;
+      setInCall(true);
+      const hostId = callHostIdRef.current;
+      if (hostId && hostId !== sessionIdRef.current) {
+        await createOfferForPeer(hostId);
+      }
+      void startVoiceTranscription(localStreamRef.current);
+    } catch (error) {
+      console.error("Could not join video call", error);
+      setCallError("Camera and microphone permission are required to join video.");
     }
   };
 
@@ -708,9 +1035,48 @@ export default function ChatPage() {
     setIsMuted(muted);
   };
 
+  const toggleCamera = () => {
+    const cameraOff = !isCameraOffRef.current;
+    isCameraOffRef.current = cameraOff;
+    localStreamRef.current?.getVideoTracks().forEach((track) => {
+      track.enabled = !cameraOff;
+    });
+    setIsCameraOff(cameraOff);
+  };
+
+  const playTranslatedAudio = async (transcript) => {
+    try {
+      setPlayingTranscriptId(transcript.id);
+      setTtsStatus("Generating translated audio...");
+      const result = await synthesizeTts(
+        transcript.translated,
+        transcript.target_language,
+        user?.voice_preference || "auto"
+      );
+      const audio = new Audio(`data:${result.mime_type};base64,${result.audio_base64}`);
+      audio.onended = () => {
+        setPlayingTranscriptId(null);
+        setTtsStatus("");
+      };
+      audio.onerror = () => {
+        setPlayingTranscriptId(null);
+        setTtsStatus("Could not play generated audio.");
+      };
+      await audio.play();
+      setTtsStatus(`Playing ${result.provider} audio (${result.latency_ms}ms).`);
+    } catch (error) {
+      setPlayingTranscriptId(null);
+      setTtsStatus(parseApiError(error) || "TTS is unavailable. Configure Piper first.");
+    }
+  };
+
   const handleOffer = async (payload) => {
+    if (payload.payload?.media_type === "video") {
+      isVideoCallRef.current = true;
+      setIsVideoCall(true);
+    }
     if (!inCallRef.current && !localStreamRef.current) {
-      await ensureLocalAudio();
+      await ensureLocalMedia({ video: isVideoCallRef.current });
       inCallRef.current = true;
       setInCall(true);
     }
@@ -720,6 +1086,9 @@ export default function ChatPage() {
     await flushPendingIce(peerId);
     const answer = await connection.createAnswer();
     await connection.setLocalDescription(answer);
+    console.info("Answer created", { target: peerId });
+    updatePeerDiagnostic(peerId, { localDescription: "answer" });
+    noteDiagnostic("answer created");
     sendSignal("webrtc_answer", peerId, {
       description: connection.localDescription,
     });
@@ -732,6 +1101,8 @@ export default function ChatPage() {
     await connection.setRemoteDescription(payload.payload.description);
     await flushPendingIce(peerId);
     console.info("Answer received", { peerId });
+    updatePeerDiagnostic(peerId, { remoteDescription: "answer" });
+    noteDiagnostic("answer received");
   };
 
   const handleIceCandidate = async (payload) => {
@@ -739,6 +1110,15 @@ export default function ChatPage() {
     const candidatePayload = payload.payload?.candidate;
     if (!candidatePayload) return;
     const candidate = new RTCIceCandidate(candidatePayload);
+    setPeerDiagnostics((current) => ({
+      ...current,
+      [peerId]: {
+        ...(current[peerId] || {}),
+        name: current[peerId]?.name || memberFor(peerId).username,
+        iceCandidatesReceived: (current[peerId]?.iceCandidatesReceived || 0) + 1,
+      },
+    }));
+    noteDiagnostic("ICE candidate received");
     const connection = peerConnectionsRef.current.get(peerId);
     if (!connection?.remoteDescription) {
       const pending = pendingIceCandidatesRef.current.get(peerId) || [];
@@ -758,6 +1138,9 @@ export default function ChatPage() {
     try {
       if (payload.type === "call_started") {
         const hostId = payload.payload?.host_session_id || payload.sender_session_id;
+        const mediaType = payload.payload?.media_type || "audio";
+        isVideoCallRef.current = mediaType === "video";
+        setIsVideoCall(mediaType === "video");
         setCallActive(true);
         setCallHostId(hostId);
         callHostIdRef.current = hostId;
@@ -815,68 +1198,191 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (!session) return undefined;
-    const token = localStorage.getItem("access_token");
-    const roomId = encodeURIComponent(session.roomId);
-    const userLang = encodeURIComponent(session.userLang);
-    const tokenParam = token ? `?token=${encodeURIComponent(token)}` : "";
-    const socket = new WebSocket(`${WS_BASE_URL}/${roomId}/${userLang}${tokenParam}`);
-    socketRef.current = socket;
+    let active = true;
+    intentionalCloseRef.current = false;
 
-    socket.onopen = () => {
-      setIsConnected(true);
-      socket.send(
-        JSON.stringify({
-          type: "join",
-          username: session.username,
-          room_id: session.roomId,
-          role: session.role,
-        })
-      );
+    const clearReconnectTimer = () => {
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
     };
 
-    socket.onclose = () => {
-      setIsConnected(false);
-      cleanupCall(false);
-    };
+    const connectSocket = () => {
+      if (!active) return;
+      const token = localStorage.getItem("access_token");
+      const roomId = encodeURIComponent(session.roomId);
+      const userLang = encodeURIComponent(activeLanguageRef.current || session.userLang);
+      const tokenParam = token ? `?token=${encodeURIComponent(token)}` : "";
+      const socket = new WebSocket(`${WS_BASE_URL}/${roomId}/${userLang}${tokenParam}`);
+      socketRef.current = socket;
 
-    socket.onmessage = async (event) => {
-      const payload = JSON.parse(event.data);
-      if (payload.type === "connection_ack") {
-        sessionIdRef.current = payload.session_id;
-        membersRef.current = payload.members || [];
-        setSessionId(payload.session_id);
-        setUserRole(payload.role || "participant");
-        setMembers(payload.members || []);
-        return;
-      }
-      if (payload.type === "room_presence") {
-        membersRef.current = payload.members || [];
-        setMembers(payload.members || []);
-        return;
-      }
-      if (SIGNALING_TYPES.has(payload.type)) {
-        await handleSignalingMessage(payload);
-        return;
-      }
-      if (payload.type === "voice_transcript") {
-        setTranscriptionError("");
-        setTranscriptionStatus(`Latest transcript received in ${payload.total_latency_ms}ms.`);
-        setTranscripts((current) => [{ ...payload, id: crypto.randomUUID() }, ...current].slice(0, 50));
-        return;
-      }
-      if (payload.type === "voice_status") {
-        setTranscriptionStatus(payload.message || "Live translation status updated.");
-        if (payload.level === "error") {
-          setTranscriptionError(payload.message || "Live translation failed.");
+      socket.onopen = () => {
+        if (!active) return;
+        setIsConnected(true);
+        reconnectAttemptsRef.current = 0;
+        noteDiagnostic("websocket connected", {
+          websocketStatus: "connected",
+          reconnectAttempts: reconnectAttemptsRef.current,
+        });
+        setConnectionError("");
+        socket.send(
+          JSON.stringify({
+            type: "join",
+            username: session.username,
+            room_id: session.roomId,
+            role: session.role,
+          })
+        );
+        socket.send(
+          JSON.stringify({
+            type: "listener_preferences",
+            room_id: session.roomId,
+            listener_mode: listenerModeRef.current,
+          })
+        );
+      };
+
+      socket.onerror = () => {
+        noteDiagnostic("websocket error", { websocketStatus: "error" });
+        setConnectionError("WebSocket error. Reconnecting...");
+      };
+
+      socket.onclose = (event) => {
+        if (!active) return;
+        setIsConnected(false);
+        noteDiagnostic("websocket closed", { websocketStatus: "closed" });
+        if (!intentionalCloseRef.current && inCallRef.current) {
+          pendingCallRecoveryRef.current = {
+            hostId: callHostIdRef.current,
+            isVideo: isVideoCallRef.current,
+          };
         }
-        return;
-      }
-      setMessages((current) => [...current, { ...payload, id: crypto.randomUUID() }]);
+        cleanupCall(false);
+        const message = `WebSocket closed: ${event.code}${event.reason ? ` - ${event.reason}` : ""}`;
+        setConnectionError(
+          intentionalCloseRef.current ? message : `${message}. Reconnecting...`
+        );
+        if (!intentionalCloseRef.current) {
+          clearReconnectTimer();
+          reconnectAttemptsRef.current += 1;
+          setDiagnostics((current) => ({
+            ...current,
+            reconnectAttempts: reconnectAttemptsRef.current,
+          }));
+          reconnectTimerRef.current = window.setTimeout(connectSocket, 1200);
+        }
+      };
+
+      socket.onmessage = async (event) => {
+        const payload = JSON.parse(event.data);
+        if (payload.type === "connection_ack") {
+          sessionIdRef.current = payload.session_id;
+          activeLanguageRef.current = payload.preferred_language || activeLanguageRef.current;
+          membersRef.current = payload.members || [];
+          setSessionId(payload.session_id);
+          setActiveLanguage(payload.preferred_language || activeLanguageRef.current);
+          setUserRole(payload.role || "participant");
+          setMembers(payload.members || []);
+          if (pendingCallRecoveryRef.current) {
+            const recovery = pendingCallRecoveryRef.current;
+            pendingCallRecoveryRef.current = null;
+            if (recovery.hostId && recovery.hostId !== payload.session_id) {
+              window.setTimeout(async () => {
+                try {
+                  isVideoCallRef.current = recovery.isVideo;
+                  setIsVideoCall(recovery.isVideo);
+                  await ensureLocalMedia({ video: recovery.isVideo });
+                  inCallRef.current = true;
+                  setInCall(true);
+                  await createOfferForPeer(recovery.hostId);
+                  noteDiagnostic("call recovery offer sent");
+                } catch (error) {
+                  console.error("Call recovery failed", error);
+                  setCallError("Call recovery failed. Rejoin the call.");
+                }
+              }, 500);
+            }
+          }
+          return;
+        }
+        if (payload.type === "room_presence") {
+          membersRef.current = payload.members || [];
+          setMembers(payload.members || []);
+          return;
+        }
+        if (SIGNALING_TYPES.has(payload.type)) {
+          await handleSignalingMessage(payload);
+          return;
+        }
+        if (payload.type === "voice_transcript") {
+          setTranscriptionError("");
+          setTranscriptionStatus(`Latest transcript received in ${payload.total_latency_ms}ms.`);
+          setTranscripts((current) => [{ ...payload, id: createClientId() }, ...current].slice(0, 50));
+          return;
+        }
+        if (payload.type === "translation_audio") {
+          setTranscriptionStatus(`Translated audio received in ${payload.total_latency_ms}ms.`);
+          setTranslatedAudioItems((current) =>
+            [{ ...payload, id: createClientId() }, ...current].slice(0, 30)
+          );
+          setTranscripts((current) =>
+            current.map((item) =>
+              item.sender_session_id === payload.sender_session_id &&
+              item.sequence === payload.sequence &&
+              item.target_language === payload.target_language
+                ? {
+                    ...item,
+                    tts_latency_ms: payload.tts_latency_ms,
+                    total_latency_ms: payload.total_latency_ms,
+                  }
+                : item
+            )
+          );
+          return;
+        }
+        if (payload.type === "translation_status") {
+          const message = payload.message
+            ? `${payload.stage}: ${payload.message}`
+            : `${payload.stage} ${payload.status}`;
+          setTranscriptionStatus(message);
+          const stageLabel = {
+            listening: payload.status === "started" ? "Listening..." : "Transcribing...",
+            stt: payload.status === "started" ? "Transcribing..." : "Transcript ready",
+            translation: payload.status === "started" ? "Translating..." : "Translation ready",
+            tts: payload.status === "started" ? "Generating speech..." : "Speaking...",
+            delivery: payload.status === "failed" ? "Delivery failed" : "",
+          }[payload.stage];
+          setParticipantTranslationStatus((current) => ({
+            ...current,
+            [payload.sender_session_id]:
+              payload.status === "failed" ? `${payload.stage} failed` : stageLabel,
+          }));
+          if (payload.status === "failed") {
+            setTranscriptionError(message);
+          }
+          return;
+        }
+        if (payload.type === "voice_status") {
+          setTranscriptionStatus(payload.message || "Live translation status updated.");
+          if (payload.level === "error") {
+            setTranscriptionError(payload.message || "Live translation failed.");
+          }
+          return;
+        }
+        setMessages((current) => [...current, { ...payload, id: createClientId() }]);
+      };
     };
+
+    connectSocket();
 
     return () => {
+      active = false;
+      clearReconnectTimer();
       cleanupCall(true);
-      socket.close();
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.close(1000, "chat_unmounted");
+      }
       socketRef.current = null;
     };
   }, [session]);
@@ -899,8 +1405,11 @@ export default function ChatPage() {
       if (audio && audio.srcObject !== stream) {
         audio.srcObject = stream;
       }
+      if (audio) {
+        audio.muted = originalAudioMuted;
+      }
     });
-  }, [remoteStreams]);
+  }, [remoteStreams, originalAudioMuted]);
 
   useEffect(() => {
     if (
@@ -912,12 +1421,19 @@ export default function ChatPage() {
   }, [directTargets, selectedRecipient]);
 
   const joinRoom = (data) => {
+    intentionalCloseRef.current = false;
     sessionIdRef.current = null;
     membersRef.current = [];
+    activeLanguageRef.current = data.userLang;
+    listenerModeRef.current = "original_translated_audio";
     callHostIdRef.current = null;
     setMessages([]);
     setMembers([]);
+    setConnectionError("");
     setSelectedRecipient("all");
+    setActiveLanguage(data.userLang);
+    setListenerMode("original_translated_audio");
+    setTranslatedAudioItems([]);
     setCallActive(false);
     setCallHostId(null);
     cleanupCall(false);
@@ -925,21 +1441,32 @@ export default function ChatPage() {
   };
 
   const leaveRoom = () => {
+    intentionalCloseRef.current = true;
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
     cleanupCall(true);
-    socketRef.current?.close();
+    socketRef.current?.close(1000, "leave_room");
     setSession(null);
     sessionIdRef.current = null;
     membersRef.current = [];
+    activeLanguageRef.current = user?.preferred_language || "en";
+    listenerModeRef.current = "original_translated_audio";
     callHostIdRef.current = null;
     setSessionId(null);
+    setActiveLanguage(user?.preferred_language || "en");
     setUserRole("participant");
     setSelectedRecipient("all");
     setMembers([]);
     setMessages([]);
     setDraft("");
+    setConnectionError("");
     setCallActive(false);
     setCallHostId(null);
     setTranscripts([]);
+    setTranslatedAudioItems([]);
+    setListenerMode("original_translated_audio");
     setTranscriptionError("");
   };
 
@@ -958,6 +1485,47 @@ export default function ChatPage() {
     setDraft("");
   };
 
+  const changeLanguage = (nextLanguage) => {
+    activeLanguageRef.current = nextLanguage;
+    setActiveLanguage(nextLanguage);
+    setMembers((current) =>
+      current.map((member) =>
+        member.session_id === sessionId
+          ? { ...member, preferred_language: nextLanguage }
+          : member
+      )
+    );
+    sendSocketMessage({
+      type: "language_update",
+      room_id: session.roomId,
+      preferred_language: nextLanguage,
+    });
+  };
+
+  const changeListenerMode = (nextMode) => {
+    listenerModeRef.current = nextMode;
+    setListenerMode(nextMode);
+    sendSocketMessage({
+      type: "listener_preferences",
+      room_id: session.roomId,
+      listener_mode: nextMode,
+    });
+  };
+
+  const copyMeetingLink = async () => {
+    const publicOrigin = import.meta.env.VITE_PUBLIC_APP_URL || window.location.origin;
+    const meetingUrl = `${publicOrigin.replace(/\/$/, "")}/chat?room=${encodeURIComponent(
+      session.roomId
+    )}`;
+    try {
+      await copyText(meetingUrl);
+      setShareStatus("Meeting link copied");
+      window.setTimeout(() => setShareStatus(""), 2500);
+    } catch {
+      setShareStatus(meetingUrl);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-brand-dark flex items-center justify-center">
@@ -967,25 +1535,32 @@ export default function ChatPage() {
   }
 
   if (!user) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to={`/login${window.location.search}`} replace />;
   }
 
   if (!session) {
-    return <JoinForm user={user} onJoin={joinRoom} />;
+    return (
+      <JoinForm
+        user={user}
+        onJoin={joinRoom}
+        initialRoomId={searchParams.get("room") || ""}
+      />
+    );
   }
 
   return (
-    <div className="flex h-screen bg-brand-dark overflow-hidden">
-      <aside className="w-72 flex-shrink-0 flex flex-col bg-brand-dark border-r border-white/10">
-        <div className="px-5 py-4 border-b border-white/10">
-          <span className="text-brand-bg font-bold text-lg tracking-tight">Translation_bot</span>
-          <p className="text-brand-bg/40 text-xs mt-0.5 truncate">{session.roomId}</p>
+    <div className="flex min-h-screen flex-col bg-brand-dark xl:h-screen xl:flex-row xl:overflow-hidden">
+      <aside className="flex max-h-[42vh] w-full flex-shrink-0 flex-col border-b border-white/[0.06] bg-ui-secondary xl:max-h-none xl:w-64 xl:border-b-0 xl:border-r">
+        <div className="px-5 py-5">
+          <span className="text-base font-semibold text-brand-bg">Translation Bot</span>
+          <p className="mt-1 truncate text-xs text-ui-subtle">Workspace / {session.roomId}</p>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-3 py-4">
-          <p className="text-xs uppercase tracking-widest font-semibold text-brand-bg/30 px-2 mb-2">
-            Participants - {members.length}
-          </p>
+        <div className="meeting-scroll flex-1 overflow-y-auto px-3 pb-4">
+          <div className="mb-2 flex items-center justify-between px-2">
+            <p className="text-xs font-medium text-ui-muted">Participants</p>
+            <span className="text-xs tabular-nums text-ui-subtle">{members.length}</span>
+          </div>
           <div className="space-y-0.5">
             {members.map((member) => (
               <MemberCard
@@ -993,6 +1568,7 @@ export default function ChatPage() {
                 member={member}
                 isSelf={member.session_id === sessionId}
                 connected={connectedPeerIds.includes(member.session_id)}
+                translationStatus={participantTranslationStatus[member.session_id]}
               />
             ))}
           </div>
@@ -1012,47 +1588,49 @@ export default function ChatPage() {
             onToggleMute={toggleMute}
           />
 
-          <TranscriptPanel
-            transcripts={transcripts}
-            enabled={transcriptionEnabled}
-            error={transcriptionError}
-            status={transcriptionStatus}
-            onStart={startVoiceTranscription}
-            onStop={stopVoiceTranscription}
-          />
-
-          {userRole === "admin" && (
-            <AdminPanel
-              users={adminUsers}
-              stats={adminStats}
-              loading={adminLoading}
-              error={adminError}
-              onRefresh={loadAdminData}
-            />
+          {!isVideoCall && (
+            <div className="hidden">
+              {Object.entries(remoteStreams).map(([peerId]) => (
+                <audio
+                  key={peerId}
+                  autoPlay
+                  muted={originalAudioMuted}
+                  ref={(element) => {
+                    if (element) remoteAudioRefs.current.set(peerId, element);
+                    else remoteAudioRefs.current.delete(peerId);
+                  }}
+                />
+              ))}
+            </div>
           )}
-
-          <div className="hidden">
-            {Object.entries(remoteStreams).map(([peerId]) => (
-              <audio
-                key={peerId}
-                autoPlay
-                ref={(element) => {
-                  if (element) remoteAudioRefs.current.set(peerId, element);
-                  else remoteAudioRefs.current.delete(peerId);
-                }}
-              />
-            ))}
-          </div>
         </div>
 
-        <div className="px-4 py-3 border-t border-white/10 flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-brand-accent/20 flex items-center justify-center text-brand-accent text-xs font-bold flex-shrink-0">
+        <div className="flex items-center gap-3 border-t border-white/[0.06] px-4 py-3">
+          <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-ui-elevated text-xs font-semibold text-ui-muted">
             {avatarInitials(user.username)}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-brand-bg text-sm font-medium truncate">{user.username}</p>
-            <p className="text-brand-bg/40 text-xs capitalize">{userRole}</p>
+            <p className="text-brand-bg text-sm font-medium truncate">
+              {user.name || user.username}
+            </p>
+            <p className="text-brand-bg/40 text-xs capitalize">
+              {userRole} / {user.voice_preference || "auto"}
+            </p>
           </div>
+          <Link
+            to="/profile"
+            onClick={leaveRoom}
+            className="text-brand-bg/40 hover:text-brand-bg/80 transition text-xs"
+          >
+            Profile
+          </Link>
+          <Link
+            to="/voice-test"
+            onClick={leaveRoom}
+            className="text-brand-bg/40 hover:text-brand-bg/80 transition text-xs"
+          >
+            Voice
+          </Link>
           <button
             type="button"
             onClick={() => {
@@ -1066,17 +1644,40 @@ export default function ChatPage() {
         </div>
       </aside>
 
-      <div className="flex-1 flex flex-col min-w-0">
-        <header className="flex items-center justify-between px-6 py-3.5 border-b border-white/10 bg-brand-mid/40 backdrop-blur-sm flex-shrink-0">
+      <main className="flex min-h-[70vh] min-w-0 flex-1 flex-col bg-brand-dark xl:min-h-0">
+        <header className="flex flex-col gap-4 border-b border-white/[0.06] px-5 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h1 className="text-brand-bg font-semibold text-base"># {session.roomId}</h1>
-            <p className="text-brand-bg/40 text-xs">
-              {session.userLang} - {members.length} online
+            <h1 className="text-[28px] font-semibold leading-tight text-brand-bg">{session.roomId}</h1>
+            <p className="mt-1 text-xs text-ui-subtle">
+              {activeLanguage} - {members.length} online
               {callHostId ? ` - call host ${memberFor(callHostId).username}` : ""}
             </p>
           </div>
-          <div className="flex items-center gap-3">
-            <label className="flex items-center gap-2 text-xs text-brand-bg/50">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={copyMeetingLink}
+              className="rounded-control bg-brand-accent px-3 py-2 text-xs font-semibold text-white hover:brightness-110"
+              aria-label="Copy meeting link"
+            >
+              {shareStatus || "Share meeting"}
+            </button>
+            <label className="flex items-center gap-2 text-xs text-ui-muted">
+              Language
+              <select
+                value={activeLanguage}
+                onChange={(event) => changeLanguage(event.target.value)}
+                disabled={!isConnected}
+                className="rounded-control border border-white/[0.06] bg-ui-secondary px-2.5 py-2 text-xs text-brand-bg outline-none focus:border-brand-accent disabled:opacity-50"
+              >
+                {LANGUAGE_OPTIONS.map((language) => (
+                  <option key={language.value} value={language.value}>
+                    {language.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex items-center gap-2 text-xs text-ui-muted">
               <input
                 type="checkbox"
                 checked={showTranslationDebug}
@@ -1097,17 +1698,45 @@ export default function ChatPage() {
             <button
               type="button"
               onClick={leaveRoom}
-              className="text-xs border border-white/10 text-brand-bg/60 px-3 py-1.5 rounded-lg hover:border-white/20 hover:text-brand-bg/80 transition"
+              className="rounded-control px-3 py-2 text-xs font-medium text-ui-muted hover:bg-white/[0.04] hover:text-brand-bg"
             >
               Leave room
             </button>
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
+        <VideoCall
+          callActive={callActive}
+          inCall={inCall}
+          isVideoCall={isVideoCall}
+          isMuted={isMuted}
+          isCameraOff={isCameraOff}
+          callError={callError}
+          connectedPeers={connectedPeers}
+          localStream={localMediaStream}
+          remoteStreams={remoteStreams}
+          members={members}
+          localLabel={user.name || user.username}
+          canStartCall={userRole === "host" || userRole === "admin"}
+          onStartVideo={startVideoCall}
+          onJoinVideo={joinVideoCall}
+          onLeave={leaveAudioCall}
+          onToggleMute={toggleMute}
+          onToggleCamera={toggleCamera}
+          muteRemoteAudio={originalAudioMuted}
+          translationStatuses={participantTranslationStatus}
+        />
+
+        <div className="meeting-scroll flex-1 space-y-3 overflow-y-auto px-4 py-5 sm:px-6">
+          {connectionError && (
+            <div className="rounded-lg border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+              {connectionError}
+            </div>
+          )}
           {messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center">
-              <p className="text-brand-bg/40 text-sm">No messages yet. Say hello.</p>
+            <div className="flex h-full min-h-32 flex-col items-center justify-center text-center">
+              <p className="text-sm font-medium text-ui-muted">Conversation starts here</p>
+              <p className="mt-1 text-xs text-ui-subtle">Messages are translated for each participant.</p>
             </div>
           ) : (
             messages.map((message) => (
@@ -1124,13 +1753,13 @@ export default function ChatPage() {
 
         <form
           onSubmit={sendMessage}
-          className="px-6 py-4 border-t border-white/10 bg-brand-mid/20 flex gap-3 flex-shrink-0"
+          className="flex flex-shrink-0 flex-col gap-2 border-t border-white/[0.06] bg-brand-dark px-4 py-4 sm:flex-row sm:px-6"
         >
           {directTargets.length > 0 && (
             <select
               value={selectedRecipient}
               onChange={(event) => setSelectedRecipient(event.target.value)}
-              className="bg-brand-dark border border-white/10 text-brand-bg/80 text-sm rounded-xl px-3 py-3 outline-none focus:border-brand-accent transition w-44 flex-shrink-0"
+              className="ui-input w-full flex-shrink-0 text-sm sm:w-44"
             >
               <option value="all">Everyone</option>
               {directTargets.map((member) => (
@@ -1144,17 +1773,53 @@ export default function ChatPage() {
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             placeholder={`Message #${session.roomId}...`}
-            className="flex-1 bg-brand-dark border border-white/10 text-brand-bg text-sm rounded-xl px-4 py-3 outline-none placeholder:text-brand-bg/30 focus:border-brand-accent transition"
+            className="ui-input flex-1 text-sm"
           />
           <button
             type="submit"
             disabled={!isConnected || !draft.trim()}
-            className="bg-brand-accent text-brand-bg px-5 py-3 rounded-xl text-sm font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition flex-shrink-0"
+            className="h-11 flex-shrink-0 rounded-control bg-brand-accent px-5 text-sm font-semibold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
           >
             Send
           </button>
         </form>
-      </div>
+      </main>
+
+      <aside className="meeting-scroll w-full flex-shrink-0 space-y-4 overflow-y-auto border-t border-white/[0.06] bg-ui-secondary p-4 xl:w-[340px] xl:border-l xl:border-t-0">
+        <TranslationPanel
+          transcripts={transcripts}
+          audioItems={translatedAudioItems}
+          listenerMode={listenerMode}
+          enabled={transcriptionEnabled}
+          error={transcriptionError}
+          status={transcriptionStatus}
+          ttsStatus={ttsStatus}
+          onChangeListenerMode={changeListenerMode}
+          onPlaybackStateChange={(item, playing) => {
+            setParticipantTranslationStatus((current) => ({
+              ...current,
+              [item.sender_session_id]: playing ? "Speaking..." : "",
+            }));
+          }}
+        />
+
+        <DiagnosticsPanel
+          diagnostics={diagnostics}
+          localStream={localMediaStream}
+          remoteStreams={remoteStreams}
+          peerDiagnostics={peerDiagnostics}
+        />
+
+        {userRole === "admin" && (
+          <AdminPanel
+            users={adminUsers}
+            stats={adminStats}
+            loading={adminLoading}
+            error={adminError}
+            onRefresh={loadAdminData}
+          />
+        )}
+      </aside>
     </div>
   );
 }

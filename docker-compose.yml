@@ -20,7 +20,7 @@ services:
       - "--port"
       - "5000"
       - "--load-only"
-      - "en,hi,es,fr,de,ja,mr"
+      - "en,hi,es,fr,de,it,pt,ru,ar,nl"
     volumes:
       - libretranslate_models:/home/libretranslate/.local
 

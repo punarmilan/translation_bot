@@ -34,19 +34,31 @@ export function parseApiError(err) {
   if (err?.response?.data?.message) return err.response.data.message;
   if (err?.response?.status) return `Request failed with status ${err.response.status}`;
   if (err?.code === "ERR_NETWORK") {
-    return "Could not reach the backend. Make sure FastAPI is running on port 8000.";
+    return window.location.protocol === "https:"
+      ? "Could not securely reach the backend. Open port 8000 in this browser and accept the local certificate first."
+      : "Could not reach the backend. Make sure FastAPI is running on port 8000.";
   }
   if (err?.message) return err.message;
   return null;
 }
 
-export async function signup(username, email, password, role, preferred_language) {
+export async function signup({
+  name,
+  email,
+  password,
+  role,
+  preferred_language,
+  pronouns,
+  voice_preference,
+}) {
   const { data } = await client.post("/auth/signup", {
-    username,
+    name,
     email,
     password,
     role: role || "participant",
     preferred_language: preferred_language || "en",
+    pronouns: pronouns || null,
+    voice_preference: voice_preference || "auto",
   });
   return data;
 }
@@ -61,17 +73,51 @@ export async function getMe() {
   return data;
 }
 
+export async function updateMe({ preferred_language, pronouns, voice_preference }) {
+  const { data } = await client.put("/auth/me", {
+    preferred_language,
+    pronouns: pronouns || null,
+    voice_preference: voice_preference || "auto",
+  });
+  return data;
+}
+
 export async function getRoomMessages(roomId, limit = 50) {
   const { data } = await client.get(`/rooms/${roomId}/messages?limit=${limit}`);
   return data;
 }
 
 export async function getAdminUsers() {
-  const { data } = await client.get("/auth/users");
+  const { data } = await client.get("/admin/users");
   return data;
 }
 
 export async function getAllRoomStats() {
   const { data } = await client.get("/rooms/stats");
+  return data;
+}
+
+export async function getSttStatus() {
+  const { data } = await client.get("/stt/status");
+  return data;
+}
+
+export async function warmupStt() {
+  const { data } = await client.post("/stt/warmup");
+  return data;
+}
+
+export async function synthesizeTts(
+  text,
+  language,
+  voice_preference = "auto",
+  speech_profile = "natural"
+) {
+  const { data } = await client.post("/tts/synthesize", {
+    text,
+    language,
+    voice_preference,
+    speech_profile,
+  });
   return data;
 }

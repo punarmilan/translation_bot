@@ -1,182 +1,113 @@
 import { Link } from "react-router-dom";
+import StatusBadge from "../components/ui/StatusBadge";
 import { useAuth } from "../contexts/AuthContext";
 
-const FEATURES = [
-  {
-    icon: "🌐",
-    title: "Instant Translation",
-    desc: "Messages auto-translate to each member's preferred language in real time.",
-  },
-  {
-    icon: "🔊",
-    title: "Voice Calling",
-    desc: "Crystal-clear peer-to-peer audio calls powered by WebRTC — no servers in the middle.",
-  },
-  {
-    icon: "🛡️",
-    title: "Secure Rooms",
-    desc: "JWT-authenticated sessions keep conversations isolated and private.",
-  },
-  {
-    icon: "⚡",
-    title: "Zero Latency",
-    desc: "Queue-based WebSocket delivery ensures no single user slows down the room.",
-  },
-];
-
-const LANGUAGES = [
-  { flag: "🇺🇸", name: "English" },
-  { flag: "🇮🇳", name: "Hindi" },
-  { flag: "🇮🇳", name: "Marathi" },
-  { flag: "🇪🇸", name: "Spanish" },
-  { flag: "🇫🇷", name: "French" },
-  { flag: "🇩🇪", name: "German" },
-  { flag: "🇯🇵", name: "Japanese" },
+const CAPABILITIES = [
+  ["Live meetings", "Peer-to-peer audio and video with room controls."],
+  ["Speech translation", "Continuous transcription, translation, and voice playback."],
+  ["Multilingual chat", "Messages adapt to every participant's preferred language."],
 ];
 
 export default function LandingPage() {
   const { user } = useAuth();
 
   return (
-    <div className="min-h-screen bg-brand-bg font-sans">
-      {/* Nav */}
-      <nav className="bg-brand-dark px-6 py-4 flex items-center justify-between">
-        <span className="text-brand-bg font-bold text-xl tracking-tight">Translation_bot</span>
-        <div className="flex items-center gap-3">
-          {user ? (
-            <Link
-              to="/chat"
-              className="bg-brand-accent text-brand-bg px-4 py-2 rounded-lg text-sm font-semibold hover:opacity-90 transition"
-            >
-              Open Chat
-            </Link>
-          ) : (
-            <>
-              <Link
-                to="/login"
-                className="text-brand-bg/80 px-4 py-2 rounded-lg text-sm font-medium hover:text-brand-bg transition"
-              >
-                Sign In
-              </Link>
-              <Link
-                to="/signup"
-                className="bg-brand-accent text-brand-bg px-4 py-2 rounded-lg text-sm font-semibold hover:opacity-90 transition"
-              >
-                Get Started
-              </Link>
-            </>
-          )}
-        </div>
-      </nav>
-
-      {/* Hero */}
-      <section className="bg-brand-dark px-6 py-24 text-center">
-        <div className="max-w-3xl mx-auto">
-          <span className="inline-block bg-brand-accent/20 text-brand-accent text-xs font-semibold uppercase tracking-widest px-3 py-1 rounded-full mb-6">
-            Real-Time · Multilingual · Open Source
-          </span>
-          <h1 className="text-5xl font-bold text-brand-bg leading-tight">
-            Speak your language.<br />
-            <span className="text-brand-accent">Connect with anyone.</span>
-          </h1>
-          <p className="mt-6 text-brand-bg/70 text-lg max-w-xl mx-auto">
-            Translation_bot translates every message on the fly. Your team speaks English,
-            Hindi, Spanish — everyone reads in their own language, instantly.
-          </p>
-          <div className="mt-10 flex items-center justify-center gap-4 flex-wrap">
-            <Link
-              to={user ? "/chat" : "/signup"}
-              className="bg-brand-accent text-brand-bg px-8 py-3 rounded-xl text-base font-semibold hover:opacity-90 transition shadow-lg"
-            >
-              {user ? "Open Chat →" : "Start for free →"}
-            </Link>
+    <div className="min-h-screen bg-brand-dark text-brand-bg">
+      <nav className="mx-auto flex max-w-7xl items-center justify-between px-5 py-5 sm:px-8">
+        <Link to="/" className="text-base font-semibold">
+          Translation Bot
+        </Link>
+        <div className="flex items-center gap-2">
+          {!user && (
             <Link
               to="/login"
-              className="border border-brand-bg/30 text-brand-bg/80 px-8 py-3 rounded-xl text-base font-medium hover:border-brand-bg/60 transition"
+              className="rounded-control px-4 py-2 text-sm font-medium text-ui-muted hover:bg-white/[0.04] hover:text-brand-bg"
             >
               Sign in
             </Link>
-          </div>
+          )}
+          <Link
+            to={user ? "/chat" : "/signup"}
+            className="rounded-control bg-brand-accent px-4 py-2 text-sm font-semibold text-white hover:brightness-110"
+          >
+            {user ? "Open workspace" : "Create account"}
+          </Link>
         </div>
-      </section>
+      </nav>
 
-      {/* Language badges */}
-      <section className="bg-brand-mid py-6 overflow-hidden">
-        <div className="flex gap-3 justify-center flex-wrap px-6">
-          {LANGUAGES.map((lang) => (
-            <span
-              key={lang.name}
-              className="bg-brand-dark text-brand-bg/80 text-sm px-3 py-1.5 rounded-full"
-            >
-              {lang.flag} {lang.name}
-            </span>
-          ))}
-        </div>
-      </section>
-
-      {/* Features */}
-      <section className="py-20 px-6">
-        <div className="max-w-5xl mx-auto">
-          <h2 className="text-3xl font-bold text-brand-dark text-center mb-4">
-            Everything you need to communicate
-          </h2>
-          <p className="text-brand-mid text-center mb-14 max-w-xl mx-auto">
-            Built on FastAPI, React, and LibreTranslate — fully open source, no vendor lock-in.
+      <main className="mx-auto grid max-w-7xl items-center gap-12 px-5 py-16 sm:px-8 lg:grid-cols-[0.8fr_1.2fr] lg:py-24">
+        <section>
+          <StatusBadge tone="blue">Multilingual meeting workspace</StatusBadge>
+          <h1 className="mt-6 max-w-xl text-4xl font-semibold leading-tight sm:text-5xl">
+            Meet naturally across languages.
+          </h1>
+          <p className="mt-5 max-w-lg text-base leading-7 text-ui-muted">
+            One focused workspace for video meetings, translated speech, live captions,
+            and multilingual team chat.
           </p>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            {FEATURES.map((f) => (
-              <div
-                key={f.title}
-                className="bg-white rounded-2xl p-6 shadow-sm border border-brand-bg hover:shadow-md transition"
+          <div className="mt-8 flex flex-wrap gap-3">
+            <Link
+              to={user ? "/chat" : "/signup"}
+              className="rounded-control bg-brand-accent px-5 py-3 text-sm font-semibold text-white hover:brightness-110"
+            >
+              {user ? "Enter a meeting" : "Get started"}
+            </Link>
+            {!user && (
+              <Link
+                to="/login"
+                className="rounded-control bg-ui-elevated px-5 py-3 text-sm font-semibold text-brand-bg hover:bg-white/[0.08]"
               >
-                <div className="text-3xl mb-4">{f.icon}</div>
-                <h3 className="font-semibold text-brand-dark mb-2">{f.title}</h3>
-                <p className="text-sm text-brand-mid leading-relaxed">{f.desc}</p>
+                I have an account
+              </Link>
+            )}
+          </div>
+
+          <div className="mt-12 space-y-5">
+            {CAPABILITIES.map(([title, description]) => (
+              <div key={title} className="grid grid-cols-[9rem_1fr] gap-4">
+                <p className="text-sm font-medium text-brand-bg">{title}</p>
+                <p className="text-sm leading-6 text-ui-subtle">{description}</p>
               </div>
             ))}
           </div>
-        </div>
-      </section>
+        </section>
 
-      {/* Example conversation */}
-      <section className="py-16 px-6 bg-brand-mid/30">
-        <div className="max-w-2xl mx-auto text-center">
-          <h2 className="text-2xl font-bold text-brand-dark mb-10">
-            One message, every language
-          </h2>
-          <div className="space-y-4 text-left">
-            {[
-              { user: "User A (English)", msg: "Hello, how are you?", lang: "en", bg: "bg-brand-dark text-brand-bg" },
-              { user: "User B sees (Hindi)", msg: "नमस्ते, आप कैसे हैं?", lang: "hi", bg: "bg-brand-accent text-brand-bg" },
-              { user: "User C sees (Marathi)", msg: "नमस्कार, तुम्ही कसे आहात?", lang: "mr", bg: "bg-brand-mid text-brand-bg" },
-            ].map((item) => (
-              <div key={item.user} className={`rounded-xl px-5 py-4 ${item.bg}`}>
-                <p className="text-xs opacity-70 mb-1">{item.user}</p>
-                <p className="font-medium text-lg">{item.msg}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* CTA */}
-      <section className="bg-brand-dark py-20 px-6 text-center">
-        <h2 className="text-3xl font-bold text-brand-bg mb-4">Ready to break language barriers?</h2>
-        <p className="text-brand-bg/60 mb-8">Create an account and join your first room in under a minute.</p>
-        <Link
-          to={user ? "/chat" : "/signup"}
-          className="bg-brand-accent text-brand-bg px-8 py-3 rounded-xl text-base font-semibold hover:opacity-90 transition shadow-lg"
+        <section
+          className="overflow-hidden rounded-[14px] border border-white/[0.06] bg-ui-secondary shadow-soft"
+          aria-label="Meeting workspace preview"
         >
-          {user ? "Go to Chat →" : "Create free account →"}
-        </Link>
-      </section>
-
-      {/* Footer */}
-      <footer className="bg-brand-dark border-t border-white/10 py-6 px-6 text-center">
-        <p className="text-brand-bg/40 text-sm">
-          Translation_bot · Built with FastAPI + React + LibreTranslate
-        </p>
-      </footer>
+          <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
+            <div>
+              <p className="text-sm font-semibold">Weekly sync</p>
+              <p className="mt-1 text-xs text-ui-subtle">3 participants / Translation active</p>
+            </div>
+            <StatusBadge tone="green">Connected</StatusBadge>
+          </div>
+          <div className="grid gap-3 p-4 sm:grid-cols-2">
+            {["Host", "Participant"].map((name, index) => (
+              <div
+                key={name}
+                className="relative aspect-video rounded-panel bg-brand-mid"
+              >
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-full bg-ui-elevated text-lg font-semibold text-ui-muted">
+                    {name[0]}
+                  </div>
+                </div>
+                <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-black/35 px-3 py-2">
+                  <span className="text-xs font-medium">{name}</span>
+                  <span className="text-[11px] text-ui-muted">{index ? "EN" : "HI"}</span>
+                </div>
+              </div>
+            ))}
+            <div className="rounded-panel bg-brand-mid p-4 sm:col-span-2">
+              <p className="text-xs font-medium text-brand-accent">Live translation</p>
+              <p className="mt-2 text-sm">Welcome to the meeting.</p>
+              <p className="mt-1 text-sm text-ui-muted">बैठक में आपका स्वागत है।</p>
+            </div>
+          </div>
+        </section>
+      </main>
     </div>
   );
 }

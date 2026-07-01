@@ -77,6 +77,7 @@ class TranslationRoutingTest(unittest.IsolatedAsyncioTestCase):
             target_lang: str,
             source_lang: str = "auto",
             mixed_language: bool = False,
+            context=None,
         ) -> TranslationResult:
             calls.append((text, source_lang, target_lang))
             return TranslationResult(

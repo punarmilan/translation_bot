@@ -10,9 +10,19 @@ frontend/dist/
 # Environment variables
 .env
 backend/.env
+frontend/.env
+frontend/.env.local
 
 # VS Code
 .vscode/
 
 # Logs
 *.log
+
+# Local HTTPS development certificates
+certs/
+
+# Downloaded speech models and platform-specific Piper runtime
+backend/models/
+backend/piper/
+backend/piper_windows_amd64.zip

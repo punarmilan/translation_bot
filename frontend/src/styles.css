@@ -2,12 +2,54 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --color-bg-primary: #0f1115;
+  --color-bg-secondary: #171a21;
+  --color-surface: #1f232b;
+  --color-surface-elevated: #262b35;
+  --color-text-primary: #f5f7fa;
+  --color-text-secondary: #a6b0bf;
+  --color-text-muted: #707784;
+  --color-accent: #5b8def;
+  --color-success: #34c759;
+  --color-warning: #f5a524;
+  --color-error: #ff5c5c;
+  --color-border: rgba(255, 255, 255, 0.06);
+  --color-hover: rgba(255, 255, 255, 0.04);
+  --color-focus: #5b8def;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --radius-control: 10px;
+  --radius-panel: 12px;
+  --radius-large: 14px;
+  --shadow-soft: 0 16px 44px rgba(0, 0, 0, 0.2);
+  --shadow-panel: 0 8px 24px rgba(0, 0, 0, 0.16);
+  --font-size-caption: 13px;
+  --font-size-body: 15px;
+  --font-size-section: 18px;
+  --font-size-meeting: 28px;
+  --transition-ui: 180ms;
+}
+
 * {
   box-sizing: border-box;
 }
 
+html {
+  background: var(--color-bg-primary);
+}
+
 body {
   margin: 0;
+  color: var(--color-text-primary);
+  background: var(--color-bg-primary);
   font-family:
     Inter,
     ui-sans-serif,
@@ -18,6 +60,42 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-size: var(--font-size-body);
+}
+
+button,
+select,
+input,
+textarea {
+  font: inherit;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  transition-duration: var(--transition-ui);
+  transition-property: color, background-color, border-color, opacity, box-shadow, transform;
+}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 3px;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+.glass-panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-panel);
 }
 
 /* Smooth scrollbar for chat area */
@@ -30,10 +108,41 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(220, 215, 201, 0.15);
+  background: rgba(255, 255, 255, 0.12);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(220, 215, 201, 0.3);
+  background: rgba(255, 255, 255, 0.2);
+}
+
+::selection {
+  background: rgba(91, 141, 239, 0.35);
+}
+
+.ui-input {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  padding: 0.75rem 0.875rem;
+}
+
+.ui-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.ui-input:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.ui-input:focus {
+  border-color: var(--color-focus);
+  box-shadow: 0 0 0 3px rgba(91, 141, 239, 0.14);
+  outline: none;
+}
+
+.meeting-scroll {
+  scrollbar-gutter: stable;
 }
