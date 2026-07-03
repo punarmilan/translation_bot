@@ -86,16 +86,17 @@ Create a GitHub Environment named `production` and add:
 | `VPS_USER` | Non-root deployment user |
 | `VPS_SSH_KEY` | Private SSH key authorized for that user |
 | `VPS_KNOWN_HOSTS` | Trusted SSH known-hosts line for the VPS |
-| `GHCR_USERNAME` | GitHub user or machine user |
-| `GHCR_TOKEN` | Classic PAT with `read:packages` |
 | `PRODUCTION_ENV` | Complete contents of the production `.env` |
+| `VPS_PATH` | Optional. Deployment directory on the VPS (default `/var/www/translation_bot`); must be writable by `VPS_USER` |
+
+GHCR authentication uses the workflow's built-in `GITHUB_TOKEN`; no personal
+access token is required.
 
 Optional Environment variables:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `VPS_SSH_PORT` | `22` | SSH port |
-| `DEPLOY_PATH` | `giftme` | Path under the deployment user's home |
 
 For controlled releases, enable required reviewers on the `production`
 Environment.
