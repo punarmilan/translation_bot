@@ -40,3 +40,9 @@ app.include_router(operations.router)
 @app.get("/")
 async def health() -> dict:
     return {"status": "ok", "service": "admin-backend"}
+
+
+@app.get("/healthz", include_in_schema=False)
+async def readiness_check() -> dict[str, str]:
+    await get_db().command("ping")
+    return {"status": "ok", "service": "admin-backend", "database": "ok"}

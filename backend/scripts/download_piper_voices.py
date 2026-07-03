@@ -25,11 +25,11 @@ def download_voice(language: str, output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     for model_file in sorted(model_files):
         for repo_file in (model_file, f"{model_file}.json"):
-            downloaded = hf_hub_download(repo_id=PIPER_REPO_ID, filename=repo_file)
             destination = output_dir / Path(repo_file).name
             if destination.exists():
                 print(f"{language}: already exists {destination}")
                 continue
+            downloaded = hf_hub_download(repo_id=PIPER_REPO_ID, filename=repo_file)
             shutil.copy2(downloaded, destination)
             print(f"{language}: {destination}")
 

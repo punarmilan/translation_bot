@@ -102,6 +102,11 @@ export async function getSttStatus() {
   return data;
 }
 
+export async function getIceServers() {
+  const { data } = await client.get("/webrtc/ice-servers");
+  return data;
+}
+
 export async function warmupStt() {
   const { data } = await client.post("/stt/warmup");
   return data;

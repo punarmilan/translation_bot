@@ -7,6 +7,7 @@ import { useAuth } from "../contexts/AuthContext";
 import {
   getAdminUsers,
   getAllRoomStats,
+  getIceServers,
   parseApiError,
   synthesizeTts,
   warmupStt,
@@ -14,8 +15,9 @@ import {
 
 const API_HOST = window.location.hostname || "localhost";
 const WS_PROTOCOL = window.location.protocol === "https:" ? "wss" : "ws";
-const WS_BASE_URL = `${WS_PROTOCOL}://${API_HOST}:8000/ws`;
-const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+const WS_BASE_URL =
+  import.meta.env.VITE_WS_BASE_URL || `${WS_PROTOCOL}://${API_HOST}:8000/ws`;
+const DEFAULT_ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 const VOICE_ACTIVITY_SAMPLE_MS = 100;
 const VOICE_SILENCE_MS = 1100;
 const VOICE_MIN_UTTERANCE_MS = 500;
@@ -456,6 +458,10 @@ export default function ChatPage() {
   const listEndRef = useRef(null);
   const localStreamRef = useRef(null);
   const peerConnectionsRef = useRef(new Map());
+  const iceServersRef = useRef({
+    servers: DEFAULT_ICE_SERVERS,
+    expiresAt: 0,
+  });
   const remoteAudioRefs = useRef(new Map());
   const pendingIceCandidatesRef = useRef(new Map());
   const mediaRecorderRef = useRef(null);
@@ -818,7 +824,28 @@ export default function ChatPage() {
     if (existing) return existing;
 
     const localStream = await ensureLocalMedia({ video: isVideoCallRef.current });
-    const connection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    const cachedIce = iceServersRef.current;
+    let iceServers = cachedIce.servers;
+    if (!cachedIce.expiresAt || cachedIce.expiresAt <= Date.now() / 1000 + 60) {
+      try {
+        const response = await getIceServers();
+        iceServers = response.iceServers?.length
+          ? response.iceServers
+          : DEFAULT_ICE_SERVERS;
+        iceServersRef.current = {
+          servers: iceServers,
+          expiresAt: response.expiresAt || Date.now() / 1000 + 300,
+        };
+      } catch (error) {
+        console.warn("TURN configuration unavailable; using STUN only", error);
+        iceServers = DEFAULT_ICE_SERVERS;
+        iceServersRef.current = {
+          servers: iceServers,
+          expiresAt: Date.now() / 1000 + 60,
+        };
+      }
+    }
+    const connection = new RTCPeerConnection({ iceServers });
     peerConnectionsRef.current.set(peerId, connection);
     updatePeerDiagnostic(peerId, {
       connectionState: connection.connectionState,

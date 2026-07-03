@@ -1,0 +1,10 @@
+.env
+.venv
+__pycache__
+*.py[cod]
+.pytest_cache
+models
+piper
+piper_windows_amd64.zip
+tests
+README.md

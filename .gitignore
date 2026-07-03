@@ -16,6 +16,9 @@ frontend/.env
 frontend/.env.local
 admin-backend/.env
 admin-frontend/.env
+deploy/.env
+deploy/.release.env
+deploy/.release.env.previous
 
 # VS Code
 .vscode/

@@ -1,7 +1,10 @@
 import asyncio
 import base64
+import hashlib
+import hmac
 import json
 import logging
+import time
 from typing import Optional
 
 from pydantic import ValidationError
@@ -11,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from app.auth.dependencies import get_current_user, require_role
 from app.auth.service import decode_token
+from app.config import get_settings
 from app.database import get_db
 from app.repositories.message_repository import MessageRepository
 from app.repositories.user_repository import UserRepository
@@ -67,6 +71,39 @@ class TTSResponse(BaseModel):
     output_file: str
     speech_profile: str
     fallback_used: bool
+
+
+@router.get("/webrtc/ice-servers")
+async def webrtc_ice_servers(
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    settings = get_settings()
+    ice_servers: list[dict] = [{"urls": ["stun:stun.l.google.com:19302"]}]
+    expires_at: int | None = None
+
+    if settings.TURN_HOST and settings.TURN_SHARED_SECRET:
+        expires_at = int(time.time()) + settings.TURN_CREDENTIAL_TTL_SECONDS
+        username = f"{expires_at}:{current_user['_id']}"
+        digest = hmac.new(
+            settings.TURN_SHARED_SECRET.encode("utf-8"),
+            username.encode("utf-8"),
+            hashlib.sha1,
+        ).digest()
+        credential = base64.b64encode(digest).decode("ascii")
+        host = settings.TURN_HOST
+        port = settings.TURN_PORT
+        ice_servers.append(
+            {
+                "urls": [
+                    f"turn:{host}:{port}?transport=udp",
+                    f"turn:{host}:{port}?transport=tcp",
+                ],
+                "username": username,
+                "credential": credential,
+            }
+        )
+
+    return {"iceServers": ice_servers, "expiresAt": expires_at}
 
 
 @router.get("/stt/status")

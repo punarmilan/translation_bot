@@ -1,0 +1,220 @@
+name: CI and production deployment
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: giftme-production-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    name: Test and validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            admin-frontend/package-lock.json
+
+      - name: Build public frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm audit --audit-level=high
+          npm run build
+
+      - name: Build admin frontend
+        working-directory: admin-frontend
+        run: |
+          npm ci
+          npm audit --audit-level=high
+          npm run build
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            admin-backend/requirements.txt
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "pytest>=8,<10" pip-audit -r backend/requirements.txt -r admin-backend/requirements.txt
+          python -m pip_audit --strict -r backend/requirements.txt
+          python -m pip_audit --strict -r admin-backend/requirements.txt
+
+      - name: Test public backend
+        working-directory: backend
+        run: python -m pytest tests
+
+      - name: Compile admin backend
+        run: python -m compileall -q admin-backend/app
+
+      - name: Validate production Compose configuration
+        run: |
+          cp deploy/.env.production.example deploy/.env
+          printf 'IMAGE_PREFIX=ghcr.io/example/giftme\nIMAGE_TAG=test\n' > deploy/.release.env
+          docker compose --env-file deploy/.env --env-file deploy/.release.env -f deploy/docker-compose.prod.yml config --quiet
+          docker run --rm \
+            -e ACME_EMAIL=ops@example.com \
+            -v "${PWD}/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile
+
+  images:
+    name: Image / ${{ matrix.image }}
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: backend
+            context: backend
+          - image: admin-backend
+            context: admin-backend
+          - image: frontend
+            context: frontend
+          - image: admin-frontend
+            context: admin-frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image prefix
+        id: image
+        shell: bash
+        run: echo "prefix=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ steps.image.outputs.prefix }}-${{ matrix.image }}:${{ github.sha }}
+            ${{ steps.image.outputs.prefix }}-${{ matrix.image }}:latest
+          build-args: |
+            VITE_API_BASE_URL=https://api.giftme.watch
+            VITE_WS_BASE_URL=wss://api.giftme.watch/ws
+            VITE_PUBLIC_APP_URL=https://giftme.watch
+            VITE_ADMIN_API_URL=https://admin.giftme.watch/api
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  deploy:
+    name: Deploy production
+    needs: images
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: production
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_PORT: ${{ vars.VPS_SSH_PORT || '22' }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH || 'giftme' }}
+      PRODUCTION_ENV: ${{ secrets.PRODUCTION_ENV }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate deployment configuration
+        shell: bash
+        run: |
+          required=(VPS_HOST VPS_USER GHCR_USERNAME GHCR_TOKEN PRODUCTION_ENV)
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing production secret: ${name}"
+              exit 1
+            fi
+          done
+          [[ "${VPS_PORT}" =~ ^[0-9]+$ ]] || { echo "::error::VPS_SSH_PORT must be numeric"; exit 1; }
+          [[ "${DEPLOY_PATH}" =~ ^[A-Za-z0-9_./-]+$ ]] || { echo "::error::DEPLOY_PATH contains unsupported characters"; exit 1; }
+          [[ "${GHCR_USERNAME}" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "::error::GHCR_USERNAME contains unsupported characters"; exit 1; }
+
+      - name: Configure SSH
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          if [[ -z "${SSH_PRIVATE_KEY}" ]]; then
+            echo "::error::Missing production secret: VPS_SSH_KEY"
+            exit 1
+          fi
+          if [[ -z "${VPS_KNOWN_HOSTS}" ]]; then
+            echo "::error::Missing production secret: VPS_KNOWN_HOSTS"
+            exit 1
+          fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/id_ed25519
+          printf '%s\n' "${VPS_KNOWN_HOSTS}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Upload deployment configuration
+        shell: bash
+        run: |
+          printf '%s\n' "${PRODUCTION_ENV}" > deploy/.env
+          chmod 600 deploy/.env
+          ssh -p "${VPS_PORT}" "${VPS_USER}@${VPS_HOST}" "mkdir -p '${DEPLOY_PATH}'"
+          scp -P "${VPS_PORT}" \
+            deploy/Caddyfile \
+            deploy/docker-compose.prod.yml \
+            deploy/mongo-init.js \
+            deploy/promote-admin.js \
+            deploy/deploy.sh \
+            deploy/promote-admin.sh \
+            deploy/.env \
+            "${VPS_USER}@${VPS_HOST}:${DEPLOY_PATH}/"
+
+      - name: Authenticate server to GHCR
+        shell: bash
+        run: |
+          printf '%s' "${GHCR_TOKEN}" |
+            ssh -p "${VPS_PORT}" "${VPS_USER}@${VPS_HOST}" \
+              "docker login ghcr.io --username '${GHCR_USERNAME}' --password-stdin"
+
+      - name: Deploy and verify
+        id: deploy
+        shell: bash
+        run: |
+          image_prefix="ghcr.io/${GITHUB_REPOSITORY,,}"
+          ssh -p "${VPS_PORT}" "${VPS_USER}@${VPS_HOST}" \
+            "cd '${DEPLOY_PATH}' && chmod +x deploy.sh promote-admin.sh && ./deploy.sh '${image_prefix}' '${GITHUB_SHA}'"
+
+      - name: Verify public endpoints
+        shell: bash
+        run: |
+          curl --fail --show-error --silent --retry 8 --retry-delay 10 https://giftme.watch/healthz
+          curl --fail --show-error --silent --retry 8 --retry-delay 10 https://api.giftme.watch/healthz
+          curl --fail --show-error --silent --retry 8 --retry-delay 10 https://admin.giftme.watch/healthz

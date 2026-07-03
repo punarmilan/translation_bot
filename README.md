@@ -1,16 +1,19 @@
 # Translation Bot
 
+> Production Docker and CI/CD guide for `giftme.watch`,
+> `api.giftme.watch`, and `admin.giftme.watch`:
+> [`docs/PRODUCTION_DEPLOYMENT.md`](docs/PRODUCTION_DEPLOYMENT.md).
+
 Translation Bot is a real-time multilingual meeting platform built with React,
-FastAPI, WebSockets, WebRTC, nullWhisper, LibreTranslate, Piper, and MongoDB.
+FastAPI, WebSockets, WebRTC, faster-whisper, LibreTranslate, Piper, and MongoDB.
 
 It combines video meetings, translated chat, live speech transcription,
 machine translation, and synthesized translated speech in one authenticated
 room experience.
 
-> **Project status:** portfolio-ready local prototype. Two-user video meetings
-> are currently the fully supported topology. Production deployment still
-> requires TURN, an SFU, hardened secrets, observability, and translation model
-> upgrades.
+> **Project status:** the two-user topology has a production Docker deployment,
+> TLS, TURN relay, hardened secrets, health checks, and CI/CD. Larger
+> multi-participant video still requires an SFU and deeper observability.
 
 ## Product Goal
 

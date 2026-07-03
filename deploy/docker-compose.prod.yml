@@ -1,0 +1,176 @@
+name: giftme
+
+services:
+  caddy:
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL is required}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      frontend:
+        condition: service_healthy
+      admin-frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+      admin-backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -qO- --header='Host: giftme.watch' http://127.0.0.1/healthz >/dev/null
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - app
+
+  frontend:
+    image: ${IMAGE_PREFIX:?IMAGE_PREFIX is required}-frontend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    networks:
+      - app
+
+  admin-frontend:
+    image: ${IMAGE_PREFIX:?IMAGE_PREFIX is required}-admin-frontend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    networks:
+      - app
+
+  backend:
+    image: ${IMAGE_PREFIX:?IMAGE_PREFIX is required}-backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MONGODB_URL: mongodb://${MONGO_APP_USERNAME}:${MONGO_APP_PASSWORD}@mongodb:27017/${MONGODB_DB}?authSource=${MONGODB_DB}
+      LIBRETRANSLATE_URL: http://libretranslate:5000
+      FRONTEND_ORIGINS: https://giftme.watch
+      CORS_ORIGIN_REGEX: ""
+      HF_HOME: /home/app/.cache/huggingface
+      PIPER_EXECUTABLE: piper
+    volumes:
+      - piper_models:/app/models/piper:ro
+      - whisper_models:/home/app/.cache/huggingface
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      libretranslate:
+        condition: service_started
+    networks:
+      - app
+
+  admin-backend:
+    image: ${IMAGE_PREFIX:?IMAGE_PREFIX is required}-admin-backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MONGODB_URL: mongodb://${MONGO_APP_USERNAME}:${MONGO_APP_PASSWORD}@mongodb:27017/${MONGODB_DB}?authSource=${MONGODB_DB}
+      PUBLIC_BACKEND_URL: http://backend:8000
+      ADMIN_FRONTEND_ORIGINS: https://admin.giftme.watch
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - app
+
+  coturn:
+    image: coturn/coturn:4.14.0
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - --listening-port=3478
+      - --min-port=49160
+      - --max-port=49200
+      - --external-ip=${TURN_EXTERNAL_IP:?TURN_EXTERNAL_IP is required}
+      - --realm=giftme.watch
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SHARED_SECRET:?TURN_SHARED_SECRET is required}
+      - --fingerprint
+      - --stale-nonce=600
+      - --total-quota=100
+      - --user-quota=12
+      - --no-cli
+      - --no-tls
+      - --no-dtls
+      - --no-multicast-peers
+      - --denied-peer-ip=0.0.0.0-0.255.255.255
+      - --denied-peer-ip=10.0.0.0-10.255.255.255
+      - --denied-peer-ip=127.0.0.0-127.255.255.255
+      - --denied-peer-ip=169.254.0.0-169.254.255.255
+      - --denied-peer-ip=172.16.0.0-172.31.255.255
+      - --denied-peer-ip=192.168.0.0-192.168.255.255
+      - --log-file=stdout
+
+  piper-models:
+    image: ${IMAGE_PREFIX:?IMAGE_PREFIX is required}-backend:${IMAGE_TAG:-latest}
+    profiles:
+      - setup
+    command: ["python", "scripts/download_piper_voices.py"]
+    volumes:
+      - piper_models:/app/models/piper
+    networks:
+      - app
+
+  mongodb:
+    image: mongo:7.0
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MONGODB_DB: ${MONGODB_DB}
+      MONGO_APP_USERNAME: ${MONGO_APP_USERNAME}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD}
+    volumes:
+      - mongodb_data:/data/db
+      - ./mongo-init.js:/docker-entrypoint-initdb.d/10-create-app-user.js:ro
+      - ./promote-admin.js:/opt/giftme/promote-admin.js:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - mongosh --quiet --username "$${MONGO_INITDB_ROOT_USERNAME}" --password "$${MONGO_INITDB_ROOT_PASSWORD}" --authenticationDatabase admin --eval "db.adminCommand('ping').ok" | grep 1
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    networks:
+      - app
+
+  libretranslate:
+    image: libretranslate/libretranslate:v1.9.6
+    restart: unless-stopped
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5000"
+      - --load-only
+      - en,hi,es,fr,de,it,pt,ru,ar,nl
+    volumes:
+      - libretranslate_models:/home/libretranslate/.local
+    networks:
+      - app
+
+networks:
+  app:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:
+  mongodb_data:
+  libretranslate_models:
+  piper_models:
+  whisper_models:

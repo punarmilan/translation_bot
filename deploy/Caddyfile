@@ -1,0 +1,61 @@
+{
+	email {$ACME_EMAIL}
+}
+
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(self), microphone=(self), geolocation=()"
+		-Server
+	}
+}
+
+giftme.watch {
+	import security_headers
+	encode zstd gzip
+
+	@health path /healthz
+	respond @health "ok" 200
+
+	reverse_proxy frontend:80
+
+	log {
+		output stdout
+		format console
+	}
+}
+
+api.giftme.watch {
+	import security_headers
+	encode zstd gzip
+	reverse_proxy backend:8000
+
+	log {
+		output stdout
+		format console
+	}
+}
+
+admin.giftme.watch {
+	import security_headers
+	encode zstd gzip
+
+	@health path /healthz
+	respond @health "ok" 200
+
+	handle_path /api/* {
+		reverse_proxy admin-backend:8010
+	}
+
+	handle {
+		reverse_proxy admin-frontend:80
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

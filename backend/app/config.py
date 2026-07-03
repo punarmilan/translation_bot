@@ -14,8 +14,29 @@ class Settings(BaseSettings):
     TRANSLATION_TIMEOUT_SECONDS: float = 8.0
     TRANSLATION_CACHE_MAX_SIZE: int = 512
     MIN_DETECTION_CONFIDENCE: float = 0.72
+    FRONTEND_ORIGINS: str = (
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "http://localhost:5174,http://127.0.0.1:5174,"
+        "http://localhost:5175,http://127.0.0.1:5175"
+    )
+    CORS_ORIGIN_REGEX: str = (
+        r"https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|"
+        r"172\.\d+\.\d+\.\d+):(5173|5174|5175)"
+    )
+    TURN_HOST: str = ""
+    TURN_PORT: int = 3478
+    TURN_SHARED_SECRET: str = ""
+    TURN_CREDENTIAL_TTL_SECONDS: int = 3600
 
     model_config = {"env_file": ".env", "extra": "ignore"}
+
+    @property
+    def frontend_origins(self) -> list[str]:
+        return [
+            value.strip()
+            for value in self.FRONTEND_ORIGINS.split(",")
+            if value.strip()
+        ]
 
 
 @lru_cache

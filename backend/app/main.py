@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.auth.router import router as auth_router
+from app.config import get_settings
 from app.database import connect_db, disconnect_db, get_db
 from app.repositories.message_repository import MessageRepository
 from app.repositories.room_repository import RoomRepository
@@ -32,7 +33,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|172\.\d+\.\d+\.\d+):(5173|5174|5175)",
+    allow_origins=get_settings().frontend_origins,
+    allow_origin_regex=get_settings().CORS_ORIGIN_REGEX or None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -45,3 +47,9 @@ app.include_router(websocket_router)
 @app.get("/")
 async def health_check() -> dict[str, str]:
     return {"status": "ok", "service": "chat-backend"}
+
+
+@app.get("/healthz", include_in_schema=False)
+async def readiness_check() -> dict[str, str]:
+    await get_db().command("ping")
+    return {"status": "ok", "service": "chat-backend", "database": "ok"}
