@@ -82,6 +82,42 @@ translated captions, or a combined experience.
 - Editable user profile
 - Unique email and username indexes
 - Admin user and room statistics endpoints
+- Separate admin frontend and admin API
+- Admin-only JWT authorization with live MongoDB role checks
+- User management, persisted meeting operations, audit logs, and system health
+
+## Admin Portal
+
+Administration is isolated from the meeting application in `admin-frontend/`
+and `admin-backend/`. This separation prevents dashboard changes from touching
+WebRTC, WebSocket, translation, chat, or public authentication runtime code.
+
+Run the existing backend first because it remains the password-verification
+authority, then start the admin API and portal:
+
+```powershell
+# Terminal 1: public backend
+cd backend
+.\.venv\Scripts\Activate.ps1
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# Terminal 2: admin backend
+cd admin-backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8010
+
+# Terminal 3: admin frontend
+cd admin-frontend
+npm install
+npm run dev
+```
+
+Open `http://localhost:5176/admin/login`. A current MongoDB user with
+`role: "admin"` is required. See
+[`docs/ADMIN_ARCHITECTURE.md`](docs/ADMIN_ARCHITECTURE.md) for the security,
+data, and deployment boundaries.
 
 ## Screenshots
 

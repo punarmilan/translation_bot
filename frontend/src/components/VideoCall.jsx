@@ -31,7 +31,7 @@ export default function VideoCall({
       : "No active call";
 
   return (
-    <section className="bg-brand-dark px-4 py-4 sm:px-6">
+    <section className="meeting-stage bg-brand-dark px-4 py-4 sm:px-6">
       <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <div className="flex flex-wrap items-center gap-2">
@@ -79,28 +79,33 @@ export default function VideoCall({
 
       {inCall && (
         <div
-          className="fixed bottom-24 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-[14px] border border-white/[0.08] bg-ui-elevated p-2 shadow-soft xl:bottom-6"
+          className="meeting-control-bar fixed bottom-24 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 xl:bottom-6"
           role="toolbar"
           aria-label="Meeting controls"
         >
           <Button
-            variant="secondary"
+            variant={isMuted ? "danger" : "secondary"}
             onClick={onToggleMute}
             aria-pressed={isMuted}
+            className={`meeting-control ${isMuted ? "meeting-control--disabled" : ""}`}
           >
+            <span className="control-icon control-icon--mic" aria-hidden="true" />
             {isMuted ? "Unmute" : "Mute"}
           </Button>
           {isVideoCall && (
             <Button
-              variant="secondary"
+              variant={isCameraOff ? "danger" : "secondary"}
               onClick={onToggleCamera}
               aria-pressed={isCameraOff}
+              className={`meeting-control ${isCameraOff ? "meeting-control--disabled" : ""}`}
             >
+              <span className="control-icon control-icon--camera" aria-hidden="true" />
               {isCameraOff ? "Camera on" : "Camera off"}
             </Button>
           )}
-          <Button variant="danger" onClick={onLeave}>
-            Leave
+          <Button variant="danger" onClick={onLeave} className="meeting-control meeting-control--leave">
+            <span className="control-icon control-icon--leave" aria-hidden="true">×</span>
+            Leave call
           </Button>
         </div>
       )}

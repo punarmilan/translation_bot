@@ -1,13 +1,12 @@
 {
-  "name": "realtime-chat-frontend",
+  "name": "translation-bot-admin",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "dev:https": "set VITE_DEV_HTTPS=1&& vite --host 0.0.0.0",
+    "dev": "vite --host 0.0.0.0 --port 5176",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview --port 4176"
   },
   "dependencies": {
     "@vitejs/plugin-react": "4.3.4",
@@ -17,10 +16,5 @@
     "react-dom": "19.0.0",
     "react-router-dom": "7.1.1",
     "vite": "6.0.7"
-  },
-  "devDependencies": {
-    "autoprefixer": "10.4.20",
-    "postcss": "8.4.49",
-    "tailwindcss": "3.4.17"
   }
 }

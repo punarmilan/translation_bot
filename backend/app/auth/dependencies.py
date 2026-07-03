@@ -32,6 +32,10 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found"
         )
+    if user.get("is_disabled") or user.get("deleted_at"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Account is disabled"
+        )
     return user
 
 
@@ -47,7 +51,10 @@ async def get_optional_user(
         return None
     db = get_db()
     repo = UserRepository(db)
-    return await repo.find_by_id(payload["sub"])
+    user = await repo.find_by_id(payload["sub"])
+    if user and not user.get("is_disabled") and not user.get("deleted_at"):
+        return user
+    return None
 
 
 def require_role(*roles: str):

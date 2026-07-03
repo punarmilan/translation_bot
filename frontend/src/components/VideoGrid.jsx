@@ -25,7 +25,7 @@ function VideoTile({
 
   return (
     <article
-      className={`group relative aspect-video min-h-44 overflow-hidden rounded-large border bg-brand-dark shadow-panel transition-ui ${
+      className={`video-tile group relative aspect-video min-h-52 overflow-hidden rounded-large border bg-brand-dark shadow-panel transition-ui ${
         speaking
           ? "border-brand-accent shadow-[0_0_0_2px_rgba(91,141,239,0.18)]"
           : "border-white/[0.06]"
@@ -51,7 +51,7 @@ function VideoTile({
         </div>
       )}
 
-      <div className="absolute inset-x-0 bottom-0 bg-black/55 p-3 backdrop-blur-sm">
+      <div className="video-tile__meta absolute inset-x-0 bottom-0 p-3">
         <div className="flex items-end justify-between gap-2">
           <div>
             <div className="flex flex-wrap items-center gap-1.5">
@@ -89,6 +89,13 @@ export default function VideoGrid({
   translationStatuses = {},
 }) {
   const remoteEntries = Object.entries(remoteStreams);
+  const tileCount = (localStream ? 1 : 0) + remoteEntries.length;
+  const gridClass =
+    tileCount <= 1
+      ? "video-grid video-grid--single"
+      : tileCount === 2
+        ? "video-grid video-grid--pair"
+        : "video-grid video-grid--group";
   const remoteTiles = useMemo(
     () =>
       remoteEntries.map(([peerId, stream]) => {
@@ -106,7 +113,7 @@ export default function VideoGrid({
 
   return (
     <div className="space-y-3">
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+      <div className={gridClass}>
         {localStream && (
           <VideoTile
             label={`${localLabel} (you)`}

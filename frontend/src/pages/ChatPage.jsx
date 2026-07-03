@@ -417,6 +417,7 @@ export default function ChatPage() {
   const [activeLanguage, setActiveLanguage] = useState(user?.preferred_language || "en");
   const [userRole, setUserRole] = useState("participant");
   const [selectedRecipient, setSelectedRecipient] = useState("all");
+  const [meetingPanel, setMeetingPanel] = useState("chat");
   const [callActive, setCallActive] = useState(false);
   const [callHostId, setCallHostId] = useState(null);
   const [inCall, setInCall] = useState(false);
@@ -1485,6 +1486,18 @@ export default function ChatPage() {
     setDraft("");
   };
 
+  const openMeetingPanel = (panel) => {
+    setMeetingPanel(panel);
+    if (window.matchMedia("(max-width: 1279px)").matches) {
+      window.requestAnimationFrame(() => {
+        document.getElementById("meeting-side-panel")?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      });
+    }
+  };
+
   const changeLanguage = (nextLanguage) => {
     activeLanguageRef.current = nextLanguage;
     setActiveLanguage(nextLanguage);
@@ -1656,6 +1669,16 @@ export default function ChatPage() {
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
+              onClick={() => openMeetingPanel("chat")}
+              className="meeting-chat-trigger"
+              aria-label="Open translated meeting chat"
+            >
+              <span className="meeting-chat-trigger__icon" aria-hidden="true" />
+              Chat
+              {messages.length > 0 && <span className="meeting-chat-trigger__count">{messages.length}</span>}
+            </button>
+            <button
+              type="button"
               onClick={copyMeetingLink}
               className="rounded-control bg-brand-accent px-3 py-2 text-xs font-semibold text-white hover:brightness-110"
               aria-label="Copy meeting link"
@@ -1733,91 +1756,140 @@ export default function ChatPage() {
               {connectionError}
             </div>
           )}
-          {messages.length === 0 ? (
+          {!connectionError && !isVideoCall && (
             <div className="flex h-full min-h-32 flex-col items-center justify-center text-center">
-              <p className="text-sm font-medium text-ui-muted">Conversation starts here</p>
-              <p className="mt-1 text-xs text-ui-subtle">Messages are translated for each participant.</p>
+              <p className="text-sm font-medium text-ui-muted">Ready for your meeting</p>
+              <p className="mt-1 text-xs text-ui-subtle">Start video or open Chat to message participants.</p>
             </div>
-          ) : (
-            messages.map((message) => (
-              <MessageBubble
-                key={message.id}
-                message={message}
-                isMine={message.sender === session.username}
-                showTranslationDebug={showTranslationDebug}
-              />
-            ))
           )}
-          <div ref={listEndRef} />
         </div>
-
-        <form
-          onSubmit={sendMessage}
-          className="flex flex-shrink-0 flex-col gap-2 border-t border-white/[0.06] bg-brand-dark px-4 py-4 sm:flex-row sm:px-6"
-        >
-          {directTargets.length > 0 && (
-            <select
-              value={selectedRecipient}
-              onChange={(event) => setSelectedRecipient(event.target.value)}
-              className="ui-input w-full flex-shrink-0 text-sm sm:w-44"
-            >
-              <option value="all">Everyone</option>
-              {directTargets.map((member) => (
-                <option key={member.session_id} value={member.session_id}>
-                  {member.username}
-                </option>
-              ))}
-            </select>
-          )}
-          <input
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            placeholder={`Message #${session.roomId}...`}
-            className="ui-input flex-1 text-sm"
-          />
-          <button
-            type="submit"
-            disabled={!isConnected || !draft.trim()}
-            className="h-11 flex-shrink-0 rounded-control bg-brand-accent px-5 text-sm font-semibold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            Send
-          </button>
-        </form>
       </main>
 
-      <aside className="meeting-scroll w-full flex-shrink-0 space-y-4 overflow-y-auto border-t border-white/[0.06] bg-ui-secondary p-4 xl:w-[340px] xl:border-l xl:border-t-0">
-        <TranslationPanel
-          transcripts={transcripts}
-          audioItems={translatedAudioItems}
-          listenerMode={listenerMode}
-          enabled={transcriptionEnabled}
-          error={transcriptionError}
-          status={transcriptionStatus}
-          ttsStatus={ttsStatus}
-          onChangeListenerMode={changeListenerMode}
-          onPlaybackStateChange={(item, playing) => {
-            setParticipantTranslationStatus((current) => ({
-              ...current,
-              [item.sender_session_id]: playing ? "Speaking..." : "",
-            }));
-          }}
-        />
+      <aside
+        id="meeting-side-panel"
+        className="meeting-side-panel w-full flex-shrink-0 border-t border-white/[0.06] bg-ui-secondary xl:w-[380px] xl:border-l xl:border-t-0"
+      >
+        <div className="meeting-panel-tabs" role="tablist" aria-label="Meeting tools">
+          {[
+            ["chat", "Chat"],
+            ["translation", "Translation"],
+            ["diagnostics", "Diagnostics"],
+          ].map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              aria-selected={meetingPanel === value}
+              className={meetingPanel === value ? "is-active" : ""}
+              onClick={() => setMeetingPanel(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
 
-        <DiagnosticsPanel
-          diagnostics={diagnostics}
-          localStream={localMediaStream}
-          remoteStreams={remoteStreams}
-          peerDiagnostics={peerDiagnostics}
-        />
+        {meetingPanel === "chat" && (
+          <div className="meeting-chat-panel" role="tabpanel">
+            <div className="meeting-chat-panel__heading">
+              <div>
+                <h2>Meeting chat</h2>
+                <p>Messages are translated for each recipient.</p>
+              </div>
+              <span>{messages.length}</span>
+            </div>
+            <div className="meeting-scroll meeting-chat-panel__messages">
+              {messages.length === 0 ? (
+                <div className="meeting-chat-empty">
+                  <span className="meeting-chat-empty__icon" aria-hidden="true" />
+                  <h3>Start the conversation</h3>
+                  <p>Send to everyone or choose a participant for a private translated message.</p>
+                </div>
+              ) : (
+                messages.map((message) => (
+                  <MessageBubble
+                    key={message.id}
+                    message={message}
+                    isMine={message.sender === session.username}
+                    showTranslationDebug={showTranslationDebug}
+                  />
+                ))
+              )}
+              <div ref={listEndRef} />
+            </div>
+            <form onSubmit={sendMessage} className="meeting-chat-composer">
+              {directTargets.length > 0 && (
+                <label>
+                  <span>Send to</span>
+                  <select
+                    value={selectedRecipient}
+                    onChange={(event) => setSelectedRecipient(event.target.value)}
+                    className="ui-input"
+                  >
+                    <option value="all">Everyone</option>
+                    {directTargets.map((member) => (
+                      <option key={member.session_id} value={member.session_id}>
+                        {member.username}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <div className="meeting-chat-composer__row">
+                <input
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  placeholder="Write a message..."
+                  className="ui-input"
+                  aria-label="Chat message"
+                />
+                <button type="submit" disabled={!isConnected || !draft.trim()} aria-label="Send message">
+                  Send
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
 
-        {userRole === "admin" && (
-          <AdminPanel
-            users={adminUsers}
-            stats={adminStats}
-            loading={adminLoading}
-            error={adminError}
-            onRefresh={loadAdminData}
-          />
+        {meetingPanel === "translation" && (
+          <div className="meeting-scroll meeting-tool-panel" role="tabpanel">
+            <TranslationPanel
+              transcripts={transcripts}
+              audioItems={translatedAudioItems}
+              listenerMode={listenerMode}
+              enabled={transcriptionEnabled}
+              error={transcriptionError}
+              status={transcriptionStatus}
+              ttsStatus={ttsStatus}
+              onChangeListenerMode={changeListenerMode}
+              onPlaybackStateChange={(item, playing) => {
+                setParticipantTranslationStatus((current) => ({
+                  ...current,
+                  [item.sender_session_id]: playing ? "Speaking..." : "",
+                }));
+              }}
+            />
+          </div>
+        )}
+
+        {meetingPanel === "diagnostics" && (
+          <div className="meeting-scroll meeting-tool-panel" role="tabpanel">
+            <DiagnosticsPanel
+              diagnostics={diagnostics}
+              localStream={localMediaStream}
+              remoteStreams={remoteStreams}
+              peerDiagnostics={peerDiagnostics}
+            />
+
+            {userRole === "admin" && (
+              <AdminPanel
+                users={adminUsers}
+                stats={adminStats}
+                loading={adminLoading}
+                error={adminError}
+                onRefresh={loadAdminData}
+              />
+            )}
+          </div>
         )}
       </aside>
     </div>

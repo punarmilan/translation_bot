@@ -186,6 +186,8 @@ async def login(body: LoginRequest) -> AuthResponse:
     repo = UserRepository(db)
 
     user = await repo.get_by_email(body.email)
+    if user and (user.get("is_disabled") or user.get("deleted_at")):
+        raise HTTPException(status_code=403, detail="Account is disabled")
     password_hash = user.get("password_hash") if user else None
     if not user or not password_hash or not verify_password(body.password, password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")

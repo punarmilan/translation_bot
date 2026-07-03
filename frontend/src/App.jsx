@@ -1,11 +1,18 @@
-import { Component } from "react";
+import { Component, useEffect } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
+import { ThemeProvider } from "./contexts/ThemeContext";
 import ChatPage from "./pages/ChatPage";
+import DocsPage from "./pages/DocsPage";
+import FeaturesPage from "./pages/FeaturesPage";
+import HelpPage from "./pages/HelpPage";
+import HowItWorksPage from "./pages/HowItWorksPage";
 import LandingPage from "./pages/LandingPage";
 import LoginPage from "./pages/LoginPage";
 import ProfilePage from "./pages/ProfilePage";
+import PricingPage from "./pages/PricingPage";
 import SignupPage from "./pages/SignupPage";
+import SolutionsPage from "./pages/SolutionsPage";
 import VoiceTestPage from "./pages/VoiceTestPage";
 
 function GuestOnly({ children }) {
@@ -15,10 +22,24 @@ function GuestOnly({ children }) {
   return user ? <Navigate to={`/chat${location.search}`} replace /> : children;
 }
 
+function ScrollToTop() {
+  const { pathname } = useLocation();
+  useEffect(() => window.scrollTo({ top: 0, behavior: "auto" }), [pathname]);
+  return null;
+}
+
 function AppRoutes() {
   return (
-    <Routes>
-      <Route path="/" element={<LandingPage />} />
+    <>
+      <ScrollToTop />
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/features" element={<FeaturesPage />} />
+        <Route path="/solutions" element={<SolutionsPage />} />
+        <Route path="/how-it-works" element={<HowItWorksPage />} />
+        <Route path="/help" element={<HelpPage />} />
+        <Route path="/docs" element={<DocsPage />} />
+        <Route path="/pricing" element={<PricingPage />} />
       <Route
         path="/login"
         element={
@@ -38,8 +59,9 @@ function AppRoutes() {
       <Route path="/chat" element={<ChatPage />} />
       <Route path="/profile" element={<ProfilePage />} />
       <Route path="/voice-test" element={<VoiceTestPage />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </>
   );
 }
 
@@ -73,9 +95,11 @@ export default function App() {
   return (
     <ErrorBoundary>
       <BrowserRouter>
-        <AuthProvider>
-          <AppRoutes />
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <AppRoutes />
+          </AuthProvider>
+        </ThemeProvider>
       </BrowserRouter>
     </ErrorBoundary>
   );
