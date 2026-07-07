@@ -1,5 +1,6 @@
 # Python
 backend/.venv/
+admin-backend/.venv/
 __pycache__/
 *.pyc
 
@@ -19,6 +20,7 @@ admin-frontend/.env
 deploy/.env
 deploy/.release.env
 deploy/.release.env.previous
+admin-backend/data/
 
 # VS Code
 .vscode/

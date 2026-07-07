@@ -34,16 +34,40 @@ class AdminMeetingRepository:
             output.append({**room, "host_name": (host or {}).get("name") or (host or {}).get("username", "Unknown"), "message_count": message_count})
         return output, total
 
-    async def queue_command(self, room_id: str, action: str, actor_id: str, participant_id: str | None = None) -> str:
+    async def queue_command(
+        self,
+        room_id: str | None,
+        action: str,
+        actor_id: str,
+        participant_id: str | None = None,
+        payload: dict | None = None,
+    ) -> str:
         command = {
             "room_id": room_id,
             "action": action,
             "participant_id": participant_id,
             "actor_id": actor_id,
             "status": "queued",
+            "payload": payload or {},
             "created_at": datetime.now(timezone.utc),
         }
         result = await self.db["admin_commands"].insert_one(command)
-        if action == "end_meeting":
+        if action == "END_MEETING" and room_id:
             await self.rooms.update_one({"room_id": room_id}, {"$set": {"is_active": False, "ended_at": datetime.now(timezone.utc)}})
         return str(result.inserted_id)
+
+    async def complete_command(self, command_id: str, ack: dict) -> None:
+        try:
+            object_id = ObjectId(command_id)
+        except Exception:
+            return
+        await self.db["admin_commands"].update_one(
+            {"_id": object_id},
+            {
+                "$set": {
+                    "status": ack.get("status", "UNKNOWN"),
+                    "acknowledgement": ack,
+                    "completed_at": datetime.now(timezone.utc),
+                }
+            },
+        )

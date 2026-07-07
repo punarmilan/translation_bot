@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
 from pymongo.errors import DuplicateKeyError
 
-from app.auth.dependencies import get_current_user, require_role
+from app.auth.dependencies import get_current_user
 from app.auth.service import create_access_token, hash_password, verify_password
 from app.database import get_db
 from app.repositories.user_repository import UserRepository
@@ -186,11 +186,13 @@ async def login(body: LoginRequest) -> AuthResponse:
     repo = UserRepository(db)
 
     user = await repo.get_by_email(body.email)
-    if user and (user.get("is_disabled") or user.get("deleted_at")):
-        raise HTTPException(status_code=403, detail="Account is disabled")
     password_hash = user.get("password_hash") if user else None
     if not user or not password_hash or not verify_password(body.password, password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    if user.get("is_disabled") or user.get("deleted_at"):
+        raise HTTPException(status_code=403, detail="Account is disabled")
+    if user.get("role") == "admin":
+        raise HTTPException(status_code=403, detail="Administrator accounts must use the admin portal")
 
     token = create_access_token(str(user["_id"]), user["username"], user["role"])
     await repo.update_last_seen(str(user["_id"]))
@@ -229,55 +231,3 @@ async def update_me(
     return public_user_for(updated)
 
 
-@router.get("/users")
-async def users(
-    _: Annotated[dict, Depends(require_role("admin"))],
-) -> list[dict]:
-    db = get_db()
-    repo = UserRepository(db)
-    return [
-        {
-            "user_id": str(user["_id"]),
-            "name": user.get("name") or user.get("username", ""),
-            "username": user["username"],
-            "email": user["email"],
-            "role": user["role"],
-            "preferred_language": user.get("preferred_language", "en"),
-            "pronouns": user.get("pronouns"),
-            "voice_preference": user.get("voice_preference", "auto"),
-            "created_at": user.get("created_at").isoformat()
-            if user.get("created_at")
-            else None,
-            "last_seen": user.get("last_seen").isoformat()
-            if user.get("last_seen")
-            else None,
-            "is_online": user.get("is_online", False),
-        }
-        for user in await repo.list_users()
-    ]
-
-
-@router.get("/admin/users")
-async def admin_users(
-    _: Annotated[dict, Depends(require_role("admin"))],
-) -> dict:
-    db = get_db()
-    repo = UserRepository(db)
-    users = await repo.list_users(limit=500)
-    distributions = await repo.profile_distributions()
-    return {
-        **distributions,
-        "users": [
-            {
-                "user_id": str(user["_id"]),
-                "name": user.get("name") or user.get("username", ""),
-                "username": user.get("username", ""),
-                "email": user.get("email", ""),
-                "role": user.get("role", "participant"),
-                "preferred_language": user.get("preferred_language", "en"),
-                "pronouns": user.get("pronouns"),
-                "voice_preference": user.get("voice_preference", "auto"),
-            }
-            for user in users
-        ],
-    }

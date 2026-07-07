@@ -5,8 +5,6 @@ import TranslationPanel from "../components/TranslationPanel";
 import VideoCall from "../components/VideoCall";
 import { useAuth } from "../contexts/AuthContext";
 import {
-  getAdminUsers,
-  getAllRoomStats,
   getIceServers,
   parseApiError,
   synthesizeTts,
@@ -44,6 +42,24 @@ const SIGNALING_TYPES = new Set([
   "webrtc_ice_candidate",
   "call_started",
   "call_ended",
+]);
+
+const ADMIN_CONTROL_TYPES = new Set([
+  "meeting_ended",
+  "participant_kicked",
+  "room_locked",
+  "room_unlocked",
+  "chat_disabled",
+  "chat_enabled",
+  "translation_disabled",
+  "translation_enabled",
+  "mute_all",
+  "participant_muted",
+  "participant_unmuted",
+  "force_reconnect",
+  "system_notification",
+  "force_logout",
+  "room_policy",
 ]);
 
 function formatTime(timestamp) {
@@ -316,43 +332,6 @@ function CallPanel({
   );
 }
 
-function AdminPanel({ users, stats, loading, error, onRefresh }) {
-  return (
-    <div className="rounded-panel bg-brand-mid p-4">
-      <div className="flex items-center justify-between gap-3 mb-3">
-        <p className="text-sm font-semibold text-brand-bg">
-          Admin
-        </p>
-        <button type="button" onClick={onRefresh} className="text-xs text-brand-accent">
-          Refresh
-        </button>
-      </div>
-      {loading ? (
-        <p className="text-xs text-brand-bg/40">Loading admin data...</p>
-      ) : error ? (
-        <p className="text-xs text-red-300">{error}</p>
-      ) : (
-        <div className="space-y-2">
-          <p className="text-sm text-brand-bg">
-            {(users.users || users).length || users.user_count || 0} registered users
-          </p>
-          {users.language_distribution && (
-            <p className="text-xs text-brand-bg/40">
-              Languages: {Object.entries(users.language_distribution).map(([key, value]) => `${key} ${value}`).join(", ")}
-            </p>
-          )}
-          {users.voice_preference_distribution && (
-            <p className="text-xs text-brand-bg/40">
-              Voices: {Object.entries(users.voice_preference_distribution).map(([key, value]) => `${key} ${value}`).join(", ")}
-            </p>
-          )}
-          <p className="text-sm text-brand-bg">{stats.length} active rooms</p>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function MessageBubble({ message, isMine, showTranslationDebug }) {
   if (message.type === "system") {
     return (
@@ -445,14 +424,13 @@ export default function ChatPage() {
     lastEvent: "",
   });
   const [peerDiagnostics, setPeerDiagnostics] = useState({});
-  const [adminUsers, setAdminUsers] = useState([]);
-  const [adminStats, setAdminStats] = useState([]);
-  const [adminLoading, setAdminLoading] = useState(false);
-  const [adminError, setAdminError] = useState("");
   const [showTranslationDebug, setShowTranslationDebug] = useState(() => {
     return localStorage.getItem("translation_debug") === "true";
   });
   const [shareStatus, setShareStatus] = useState("");
+  const [chatEnabled, setChatEnabled] = useState(true);
+  const [translationEnabledByAdmin, setTranslationEnabledByAdmin] = useState(true);
+  const [roomLocked, setRoomLocked] = useState(false);
 
   const socketRef = useRef(null);
   const listEndRef = useRef(null);
@@ -609,7 +587,7 @@ export default function ChatPage() {
       transcriptionAudioContextRef.current = null;
     }
     const recorder = mediaRecorderRef.current;
-    if (recorder && recorder.state !== "inactive") {
+      if (recorder && recorder.state !== "inactive") {
       if (recorder.__activitySent) {
         sendSocketMessage({
           type: "voice_activity",
@@ -624,6 +602,90 @@ export default function ChatPage() {
     mediaRecorderRef.current = null;
     setTranscriptionEnabled(false);
     setTranscriptionStatus("");
+  };
+
+  const applyAdministrativeExit = (message, shouldLogout = false) => {
+    setConnectionError(message);
+    stopVoiceTranscription();
+    cleanupCall(true);
+    intentionalCloseRef.current = true;
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.close(1000, "admin_control");
+    }
+    socketRef.current = null;
+    setMessages((current) => [
+      ...current,
+      { id: createClientId(), type: "system", text: message, timestamp: new Date().toISOString() },
+    ]);
+    setSession(null);
+    if (shouldLogout) {
+      logout();
+    }
+  };
+
+  const handleAdminControlEvent = async (payload) => {
+    const message = payload.message || "Administrative action applied.";
+    if (payload.type === "meeting_ended") {
+      applyAdministrativeExit(message || "This meeting was ended by an administrator.");
+      return true;
+    }
+    if (payload.type === "participant_kicked") {
+      applyAdministrativeExit(message || "You were removed by an administrator.");
+      return true;
+    }
+    if (payload.type === "force_logout") {
+      applyAdministrativeExit(message || "Your session was ended by an administrator.", true);
+      return true;
+    }
+    if (payload.type === "force_reconnect") {
+      setConnectionError(message || "Administrator requested reconnect.");
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.close(1012, "admin_force_reconnect");
+      }
+      return true;
+    }
+    if (payload.type === "room_policy") {
+      setRoomLocked(Boolean(payload.locked));
+      setChatEnabled(payload.chat_enabled !== false);
+      setTranslationEnabledByAdmin(payload.translation_enabled !== false);
+      return true;
+    }
+    if (payload.type === "room_locked" || payload.type === "room_unlocked") {
+      setRoomLocked(payload.type === "room_locked");
+    }
+    if (payload.type === "chat_disabled" || payload.type === "chat_enabled") {
+      setChatEnabled(payload.type === "chat_enabled");
+    }
+    if (payload.type === "translation_disabled" || payload.type === "translation_enabled") {
+      const enabled = payload.type === "translation_enabled";
+      setTranslationEnabledByAdmin(enabled);
+      if (!enabled) stopVoiceTranscription();
+    }
+    if (payload.type === "mute_all" || payload.type === "participant_muted") {
+      setIsMuted(true);
+      isMutedRef.current = true;
+      localStreamRef.current?.getAudioTracks().forEach((track) => { track.enabled = false; });
+    }
+    if (payload.type === "participant_unmuted") {
+      setIsMuted(false);
+      isMutedRef.current = false;
+      localStreamRef.current?.getAudioTracks().forEach((track) => { track.enabled = true; });
+    }
+    if (payload.type === "system_notification") {
+      setMessages((current) => [
+        ...current,
+        { id: createClientId(), type: "system", text: message, timestamp: payload.timestamp },
+      ]);
+      return true;
+    }
+    if (ADMIN_CONTROL_TYPES.has(payload.type)) {
+      setMessages((current) => [
+        ...current,
+        { id: createClientId(), type: "system", text: message, timestamp: payload.timestamp },
+      ]);
+      return true;
+    }
+    return false;
   };
 
   const startVoiceTranscription = async (existingStream = null) => {
@@ -1209,21 +1271,6 @@ export default function ChatPage() {
     }
   };
 
-  const loadAdminData = async () => {
-    if (user?.role !== "admin") return;
-    setAdminLoading(true);
-    setAdminError("");
-    try {
-      const [users, stats] = await Promise.all([getAdminUsers(), getAllRoomStats()]);
-      setAdminUsers(users);
-      setAdminStats(stats);
-    } catch (error) {
-      setAdminError(parseApiError(error) || "Could not load admin data.");
-    } finally {
-      setAdminLoading(false);
-    }
-  };
-
   useEffect(() => {
     if (!session) return undefined;
     let active = true;
@@ -1304,6 +1351,9 @@ export default function ChatPage() {
 
       socket.onmessage = async (event) => {
         const payload = JSON.parse(event.data);
+        if (ADMIN_CONTROL_TYPES.has(payload.type) && await handleAdminControlEvent(payload)) {
+          return;
+        }
         if (payload.type === "connection_ack") {
           sessionIdRef.current = payload.session_id;
           activeLanguageRef.current = payload.preferred_language || activeLanguageRef.current;
@@ -1424,10 +1474,6 @@ export default function ChatPage() {
   }, [showTranslationDebug]);
 
   useEffect(() => {
-    loadAdminData();
-  }, [user?.role]);
-
-  useEffect(() => {
     Object.entries(remoteStreams).forEach(([peerId, stream]) => {
       const audio = remoteAudioRefs.current.get(peerId);
       if (audio && audio.srcObject !== stream) {
@@ -1501,6 +1547,10 @@ export default function ChatPage() {
   const sendMessage = (event) => {
     event.preventDefault();
     const text = draft.trim();
+    if (!chatEnabled) {
+      setConnectionError("Chat is disabled by an administrator.");
+      return;
+    }
     if (!text || socketRef.current?.readyState !== WebSocket.OPEN) return;
     sendSocketMessage({
       type: "chat",
@@ -1814,6 +1864,13 @@ export default function ChatPage() {
             </button>
           ))}
         </div>
+        {(roomLocked || !chatEnabled || !translationEnabledByAdmin) && (
+          <div className="mx-4 mt-3 rounded-lg border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
+            {roomLocked ? "Room locked. " : ""}
+            {!chatEnabled ? "Chat disabled. " : ""}
+            {!translationEnabledByAdmin ? "Translation disabled." : ""}
+          </div>
+        )}
 
         {meetingPanel === "chat" && (
           <div className="meeting-chat-panel" role="tabpanel">
@@ -1865,11 +1922,12 @@ export default function ChatPage() {
                 <input
                   value={draft}
                   onChange={(event) => setDraft(event.target.value)}
-                  placeholder="Write a message..."
+                  placeholder={chatEnabled ? "Write a message..." : "Chat disabled by administrator"}
                   className="ui-input"
                   aria-label="Chat message"
+                  disabled={!chatEnabled}
                 />
-                <button type="submit" disabled={!isConnected || !draft.trim()} aria-label="Send message">
+                <button type="submit" disabled={!isConnected || !draft.trim() || !chatEnabled} aria-label="Send message">
                   Send
                 </button>
               </div>
@@ -1887,7 +1945,8 @@ export default function ChatPage() {
               error={transcriptionError}
               status={transcriptionStatus}
               ttsStatus={ttsStatus}
-              onChangeListenerMode={changeListenerMode}
+              onChangeListenerMode={translationEnabledByAdmin ? changeListenerMode : () => setTranscriptionError("Translation is disabled by an administrator.")}
+              disabled={!translationEnabledByAdmin}
               onPlaybackStateChange={(item, playing) => {
                 setParticipantTranslationStatus((current) => ({
                   ...current,
@@ -1907,15 +1966,6 @@ export default function ChatPage() {
               peerDiagnostics={peerDiagnostics}
             />
 
-            {userRole === "admin" && (
-              <AdminPanel
-                users={adminUsers}
-                stats={adminStats}
-                loading={adminLoading}
-                error={adminError}
-                onRefresh={loadAdminData}
-              />
-            )}
           </div>
         )}
       </aside>

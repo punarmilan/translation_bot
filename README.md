@@ -95,8 +95,12 @@ Administration is isolated from the meeting application in `admin-frontend/`
 and `admin-backend/`. This separation prevents dashboard changes from touching
 WebRTC, WebSocket, translation, chat, or public authentication runtime code.
 
-Run the existing backend first because it remains the password-verification
-authority, then start the admin API and portal:
+User and administrator authentication are separate trust domains. User JWTs
+contain `type=user` and use `JWT_SECRET`. Admin access and rotating refresh
+tokens contain `type=admin`, use `ADMIN_JWT_SECRET`, and are stored in HttpOnly
+cookies. Neither token type can authorize the other API.
+
+Start MongoDB, then run the applications independently:
 
 ```powershell
 # Terminal 1: public backend

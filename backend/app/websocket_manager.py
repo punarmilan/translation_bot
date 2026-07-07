@@ -56,6 +56,7 @@ class ClientSession:
     session_id: str
     websocket: WebSocket
     room_id: str
+    user_id: str | None
     username: str
     name: str | None
     role: str
@@ -85,6 +86,9 @@ class RoomState:
     meeting_active: bool = False
     meeting_host_session_id: str | None = None
     meeting_media_type: str = "video"
+    locked: bool = False
+    chat_enabled: bool = True
+    translation_enabled: bool = True
 
 
 class RoomConnectionManager:
@@ -100,6 +104,7 @@ class RoomConnectionManager:
         self,
         websocket: WebSocket,
         room_id: str,
+        user_id: str | None,
         username: str,
         preferred_language: str,
         name: str | None = None,
@@ -111,6 +116,7 @@ class RoomConnectionManager:
             session_id=str(uuid4()),
             websocket=websocket,
             room_id=room_id,
+            user_id=user_id,
             username=username,
             name=name or username,
             role=role,
@@ -138,6 +144,11 @@ class RoomConnectionManager:
                 if room.meeting_active and meeting_host
                 else None
             )
+            room_policy = {
+                "locked": room.locked,
+                "chat_enabled": room.chat_enabled,
+                "translation_enabled": room.translation_enabled,
+            }
 
         self._log_transport_event(
             "connect",
@@ -173,6 +184,18 @@ class RoomConnectionManager:
                 },
             )
             self._enqueue(session, active_call.model_dump_json(), event="call_started")
+        self._enqueue(
+            session,
+            json.dumps(
+                {
+                    "type": "room_policy",
+                    "room_id": room_id,
+                    **room_policy,
+                    "timestamp": utc_timestamp(),
+                }
+            ),
+            event="room_policy",
+        )
         await self.broadcast_system(room_id, f"{username} joined the room")
         await self.broadcast_presence(room_id)
         return session.session_id
@@ -288,6 +311,20 @@ class RoomConnectionManager:
                 return
             sender_session = self._session_for_socket_unlocked(sender_socket)
             if not sender_session:
+                return
+            if not room.chat_enabled:
+                self._enqueue(
+                    sender_session,
+                    json.dumps(
+                        {
+                            "type": "chat_disabled",
+                            "room_id": room_id,
+                            "message": "Chat is disabled by an administrator.",
+                            "timestamp": utc_timestamp(),
+                        }
+                    ),
+                    event="chat_disabled",
+                )
                 return
             room.message_count += 1
             connections = self._message_recipients_unlocked(
@@ -486,6 +523,20 @@ class RoomConnectionManager:
                 session for session in room.sessions.values() if session.in_meeting
             ] if room else []
             if not sender or not room or sender.room_id != message.room_id:
+                return
+            if not room.translation_enabled:
+                self._enqueue(
+                    sender,
+                    json.dumps(
+                        {
+                            "type": "translation_disabled",
+                            "room_id": message.room_id,
+                            "message": "Live translation is disabled by an administrator.",
+                            "timestamp": utc_timestamp(),
+                        }
+                    ),
+                    event="translation_disabled",
+                )
                 return
             if not sender.in_meeting:
                 self._log_voice_event(
@@ -1164,6 +1215,88 @@ class RoomConnectionManager:
         async with self._lock:
             return [self._room_stats_unlocked(room) for room in self.rooms.values()]
 
+    async def apply_admin_command(self, command: dict) -> dict:
+        command_type = command.get("command_type")
+        room_id = command.get("room_id")
+        target_session_id = command.get("target_session_id")
+        target_user_id = command.get("target_user_id")
+        payload = command.get("payload") if isinstance(command.get("payload"), dict) else {}
+        command_id = command.get("command_id")
+
+        async with self._lock:
+            room = self.rooms.get(room_id) if room_id else None
+            target = self.sessions.get(target_session_id) if target_session_id else None
+            if not target and target_user_id:
+                target = next((session for session in self.sessions.values() if session.user_id == target_user_id), None)
+            if not room and target:
+                room = self.rooms.get(target.room_id)
+
+            if command_type in {"FORCE_LOGOUT", "REMOVE_USER", "BAN_USER"}:
+                targets = [target] if target else [
+                    session for session in self.sessions.values() if session.user_id == target_user_id
+                ]
+                if not targets:
+                    return self._ack(command, "NOT_CONNECTED", "Target user is not connected.")
+                for session in targets:
+                    self._enqueue(session, self._admin_event_payload("force_logout", session.room_id, command, payload), event="force_logout")
+                return self._ack(command, "SUCCESS", f"{len(targets)} active session(s) notified.")
+
+            if not room:
+                return self._ack(command, "ROOM_NOT_FOUND", "Room is not active on this backend.")
+
+            room_sessions = list(room.sessions.values())
+
+            if command_type == "END_MEETING":
+                room.meeting_active = False
+                room.meeting_host_session_id = None
+                for session in room_sessions:
+                    session.in_meeting = False
+                    session.active_peer_session_id = None
+                    self._enqueue(session, self._admin_event_payload("meeting_ended", room.room_id, command, payload), event="meeting_ended")
+                return self._ack(command, "SUCCESS", f"Meeting ended for {len(room_sessions)} connected participant(s).")
+
+            if command_type == "LOCK_MEETING":
+                room.locked = True
+                event_name = "room_locked"
+            elif command_type == "UNLOCK_MEETING":
+                room.locked = False
+                event_name = "room_unlocked"
+            elif command_type == "DISABLE_CHAT":
+                room.chat_enabled = False
+                event_name = "chat_disabled"
+            elif command_type == "ENABLE_CHAT":
+                room.chat_enabled = True
+                event_name = "chat_enabled"
+            elif command_type == "DISABLE_TRANSLATION":
+                room.translation_enabled = False
+                event_name = "translation_disabled"
+            elif command_type == "ENABLE_TRANSLATION":
+                room.translation_enabled = True
+                event_name = "translation_enabled"
+            elif command_type == "MUTE_ALL":
+                event_name = "mute_all"
+            elif command_type == "FORCE_RECONNECT":
+                event_name = "force_reconnect"
+            elif command_type == "SEND_SYSTEM_NOTIFICATION":
+                event_name = "system_notification"
+            elif command_type in {"KICK_PARTICIPANT", "MUTE_PARTICIPANT", "UNMUTE_PARTICIPANT"}:
+                if not target or target.room_id != room.room_id:
+                    return self._ack(command, "NOT_CONNECTED", "Target participant is not connected to this room.")
+                event_name = {
+                    "KICK_PARTICIPANT": "participant_kicked",
+                    "MUTE_PARTICIPANT": "participant_muted",
+                    "UNMUTE_PARTICIPANT": "participant_unmuted",
+                }[command_type]
+                self._enqueue(target, self._admin_event_payload(event_name, room.room_id, command, payload), event=event_name)
+                return self._ack(command, "SUCCESS", f"{event_name} delivered to {target.username}.")
+            else:
+                return self._ack(command, "FAILED", f"Unsupported admin command: {command_type}")
+
+            admin_payload = self._admin_event_payload(event_name, room.room_id, command, payload)
+            for session in room_sessions:
+                self._enqueue(session, admin_payload, event=event_name)
+            return self._ack(command, "SUCCESS", f"{event_name} delivered to {len(room_sessions)} participant(s).")
+
     async def _sender_loop(self, session: ClientSession) -> None:
         while True:
             payload = await session.outbound_queue.get()
@@ -1243,6 +1376,33 @@ class RoomConnectionManager:
     def _enqueue_shutdown(self, session: ClientSession) -> None:
         with contextlib.suppress(asyncio.QueueFull):
             session.outbound_queue.put_nowait(QUEUE_SHUTDOWN_SENTINEL)
+
+    def _admin_event_payload(self, event_type: str, room_id: str, command: dict, payload: dict) -> str:
+        return json.dumps(
+            {
+                "type": event_type,
+                "room_id": room_id,
+                "command_id": command.get("command_id"),
+                "message": payload.get("message") or payload.get("reason") or "Administrative action applied.",
+                "target_session_id": command.get("target_session_id"),
+                "target_user_id": command.get("target_user_id"),
+                "payload": payload,
+                "timestamp": utc_timestamp(),
+            },
+            ensure_ascii=False,
+        )
+
+    def _ack(self, command: dict, status: str, message: str) -> dict:
+        return {
+            "command_id": command.get("command_id"),
+            "command_type": command.get("command_type"),
+            "room_id": command.get("room_id"),
+            "target_session_id": command.get("target_session_id"),
+            "target_user_id": command.get("target_user_id"),
+            "status": status,
+            "message": message,
+            "acknowledged_at": utc_timestamp(),
+        }
 
     def _send_voice_status(
         self,

@@ -1,13 +1,13 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends
 
 from app.database import get_db
-from app.security import require_admin
+from app.security import require_permission
 
-router = APIRouter(prefix="/admin/dashboard", tags=["dashboard"])
+router = APIRouter(prefix="/api/admin/dashboard", tags=["dashboard"])
 
 
 def json_value(value):
@@ -27,7 +27,7 @@ def serialize(document: dict) -> dict:
 
 
 @router.get("")
-async def dashboard(_: Annotated[dict, Depends(require_admin)]) -> dict:
+async def dashboard(_: Annotated[dict, Depends(require_permission("dashboard.read"))]) -> dict:
     db = get_db()
     start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     total_users = await db["users"].count_documents({"deleted_at": {"$exists": False}})
@@ -39,6 +39,29 @@ async def dashboard(_: Annotated[dict, Depends(require_admin)]) -> dict:
     recent_signups = await db["users"].find({}, {"password_hash": 0}).sort("created_at", -1).limit(5).to_list(length=5)
     recent_meetings = await db["rooms"].find({}).sort("created_at", -1).limit(5).to_list(length=5)
     recent_errors = await db["translation_logs"].find({"translation_success": False}).sort("timestamp", -1).limit(5).to_list(length=5)
+    language_rows = await db["users"].aggregate([
+        {"$match": {"deleted_at": {"$exists": False}}},
+        {"$group": {"_id": "$preferred_language", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+    ]).to_list(length=25)
+    day_starts = [start - timedelta(days=days_ago) for days_ago in range(13, -1, -1)]
+    daily_usage = []
+    for day_start in day_starts:
+        day_end = day_start + timedelta(days=1)
+        day_start_naive = day_start.replace(tzinfo=None)
+        day_end_naive = day_end.replace(tzinfo=None)
+        daily_usage.append({
+            "date": day_start.date().isoformat(),
+            "users": await db["users"].count_documents({"created_at": {"$gte": day_start_naive, "$lt": day_end_naive}}),
+            "meetings": await db["rooms"].count_documents({"created_at": {"$gte": day_start_naive, "$lt": day_end_naive}}),
+            "translations": await db["translation_logs"].count_documents({"timestamp": {"$gte": day_start_naive, "$lt": day_end_naive}}),
+        })
+    latency_rows = await db["translation_logs"].aggregate([
+        {"$match": {"latency_ms": {"$type": "number"}}},
+        {"$group": {"_id": None, "average": {"$avg": "$latency_ms"}}},
+    ]).to_list(length=1)
+    avg_latency = round(latency_rows[0]["average"]) if latency_rows else None
+    enabled_languages = await db["platform_languages"].count_documents({"enabled": {"$ne": False}})
     return {
         "metrics": {
             "total_users": total_users,
@@ -48,9 +71,9 @@ async def dashboard(_: Annotated[dict, Depends(require_admin)]) -> dict:
             "messages_translated": translated_messages,
             "voice_minutes": None,
             "translation_requests": translation_requests,
-            "average_latency_ms": None,
+            "average_latency_ms": avg_latency,
             "countries_connected": None,
-            "supported_languages": 10,
+            "supported_languages": enabled_languages or 10,
         },
         "metric_notes": {
             "voice_minutes": "Pending media usage persistence",
@@ -60,4 +83,8 @@ async def dashboard(_: Annotated[dict, Depends(require_admin)]) -> dict:
         "recent_signups": [serialize(item) for item in recent_signups],
         "recent_meetings": [serialize(item) for item in recent_meetings],
         "recent_errors": [serialize(item) for item in recent_errors],
+        "charts": {
+            "daily_usage": daily_usage,
+            "languages": [{"label": row["_id"] or "unknown", "value": row["count"]} for row in language_rows],
+        },
     }

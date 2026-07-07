@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from app.auth.dependencies import get_current_user, require_role
+from app.auth.dependencies import get_current_user
 from app.auth.service import decode_token
 from app.config import get_settings
 from app.database import get_db
@@ -26,7 +26,6 @@ from app.schemas import (
     IncomingVoiceActivityMessage,
     IncomingVoiceChunkMessage,
     JoinMessage,
-    RoomStats,
 )
 from app.stt.service import stt_service
 from app.tts.service import tts_service
@@ -202,6 +201,7 @@ async def websocket_room_chat(
         await manager.connect(
             websocket=websocket,
             room_id=room_id,
+            user_id=user_id,
             username=authenticated_username,
             name=current_user.get("name") or authenticated_username,
             preferred_language=authenticated_language,
@@ -501,21 +501,6 @@ async def _persist_message(
         )
 
 
-@router.get("/rooms/{room_id}/stats", response_model=RoomStats)
-async def room_stats(
-    room_id: str,
-    _: dict = Depends(require_role("admin")),
-) -> RoomStats:
-    return await manager.room_stats(room_id)
-
-
-@router.get("/rooms/stats", response_model=list[RoomStats])
-async def all_room_stats(
-    _: dict = Depends(require_role("admin")),
-) -> list[RoomStats]:
-    return await manager.all_room_stats()
-
-
 @router.get("/rooms/{room_id}/messages")
 async def room_messages(
     room_id: str,
@@ -537,29 +522,3 @@ async def room_messages(
         }
         for m in messages
     ]
-
-
-@router.get("/admin/users")
-async def admin_users(
-    _: dict = Depends(require_role("admin")),
-) -> dict:
-    db = get_db()
-    repo = UserRepository(db)
-    users = await repo.list_users(limit=500)
-    distributions = await repo.profile_distributions()
-    return {
-        **distributions,
-        "users": [
-            {
-                "user_id": str(user["_id"]),
-                "name": user.get("name") or user.get("username", ""),
-                "username": user.get("username", ""),
-                "email": user.get("email", ""),
-                "role": user.get("role", "participant"),
-                "preferred_language": user.get("preferred_language", "en"),
-                "pronouns": user.get("pronouns"),
-                "voice_preference": user.get("voice_preference", "auto"),
-            }
-            for user in users
-        ],
-    }

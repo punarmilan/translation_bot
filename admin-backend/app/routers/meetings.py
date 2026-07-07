@@ -5,16 +5,45 @@ from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from app.control_plane import control_plane
 from app.database import get_db
 from app.repositories.audit_repository import AuditRepository
 from app.repositories.meeting_repository import AdminMeetingRepository
-from app.security import require_admin
+from app.security import require_permission
 
-router = APIRouter(prefix="/admin/meetings", tags=["meetings"])
+router = APIRouter(prefix="/api/admin/meetings", tags=["meetings"])
 
 
 class KickRequest(BaseModel):
     participant_id: str
+
+
+class MeetingCommandRequest(BaseModel):
+    command_type: str
+    target_session_id: str | None = None
+    target_user_id: str | None = None
+    message: str | None = None
+    payload: dict | None = None
+
+
+ROOM_COMMANDS = {
+    "END_MEETING",
+    "LOCK_MEETING",
+    "UNLOCK_MEETING",
+    "MUTE_ALL",
+    "DISABLE_CHAT",
+    "ENABLE_CHAT",
+    "DISABLE_TRANSLATION",
+    "ENABLE_TRANSLATION",
+    "FORCE_RECONNECT",
+    "SEND_SYSTEM_NOTIFICATION",
+}
+
+PARTICIPANT_COMMANDS = {
+    "KICK_PARTICIPANT",
+    "MUTE_PARTICIPANT",
+    "UNMUTE_PARTICIPANT",
+}
 
 
 def json_value(value):
@@ -50,7 +79,7 @@ def serialize(room: dict) -> dict:
 
 @router.get("")
 async def list_meetings(
-    _: Annotated[dict, Depends(require_admin)],
+    _: Annotated[dict, Depends(require_permission("meetings.read"))],
     search: str = "",
     status: str | None = None,
     page: int = Query(1, ge=1),
@@ -61,21 +90,85 @@ async def list_meetings(
 
 
 @router.post("/{room_id}/end", status_code=202)
-async def end_meeting(room_id: str, admin: Annotated[dict, Depends(require_admin)]) -> dict:
-    command_id = await AdminMeetingRepository(get_db()).queue_command(room_id, "end_meeting", str(admin["_id"]))
-    await AuditRepository(get_db()).record(str(admin["_id"]), "meeting.end_requested", "meeting", room_id)
-    return {"status": "queued", "command_id": command_id, "note": "Live enforcement requires the future shared control plane."}
+async def end_meeting(room_id: str, admin: Annotated[dict, Depends(require_permission("meetings.write"))]) -> dict:
+    return await issue_meeting_command(
+        room_id,
+        MeetingCommandRequest(command_type="END_MEETING", payload={"reason": "Ended by administrator"}),
+        admin,
+    )
 
 
 @router.post("/{room_id}/kick", status_code=202)
-async def kick_participant(room_id: str, body: KickRequest, admin: Annotated[dict, Depends(require_admin)]) -> dict:
-    command_id = await AdminMeetingRepository(get_db()).queue_command(room_id, "kick_participant", str(admin["_id"]), body.participant_id)
-    await AuditRepository(get_db()).record(str(admin["_id"]), "meeting.kick_requested", "meeting", room_id, {"participant_id": body.participant_id})
-    return {"status": "queued", "command_id": command_id, "note": "Live enforcement requires the future shared control plane."}
+async def kick_participant(room_id: str, body: KickRequest, admin: Annotated[dict, Depends(require_permission("meetings.write"))]) -> dict:
+    return await issue_meeting_command(
+        room_id,
+        MeetingCommandRequest(
+            command_type="KICK_PARTICIPANT",
+            target_session_id=body.participant_id,
+            payload={"reason": "Removed by administrator"},
+        ),
+        admin,
+    )
+
+
+@router.post("/{room_id}/command", status_code=202)
+async def issue_meeting_command(
+    room_id: str,
+    body: MeetingCommandRequest,
+    admin: Annotated[dict, Depends(require_permission("meetings.write"))],
+) -> dict:
+    command_type = body.command_type.upper()
+    if command_type not in ROOM_COMMANDS | PARTICIPANT_COMMANDS:
+        raise HTTPException(status_code=400, detail="Unsupported meeting command")
+    if command_type in PARTICIPANT_COMMANDS and not body.target_session_id:
+        raise HTTPException(status_code=400, detail="target_session_id is required")
+
+    repo = AdminMeetingRepository(get_db())
+    payload = {**(body.payload or {})}
+    if body.message:
+        payload["message"] = body.message
+    local_command_id = await repo.queue_command(
+        room_id,
+        command_type,
+        str(admin["_id"]),
+        participant_id=body.target_session_id,
+        payload=payload,
+    )
+    ack = await control_plane.publish_and_wait(
+        command_type=command_type,
+        actor_id=str(admin["_id"]),
+        actor_email=admin.get("email", ""),
+        room_id=room_id,
+        target_session_id=body.target_session_id,
+        target_user_id=body.target_user_id,
+        payload=payload,
+    )
+    await repo.complete_command(local_command_id, ack)
+    await AuditRepository(get_db()).record(
+        str(admin["_id"]),
+        f"meeting.{command_type.lower()}",
+        "meeting",
+        room_id,
+        {
+            "local_command_id": local_command_id,
+            "control_command_id": ack.get("command_id"),
+            "target_session_id": body.target_session_id,
+            "target_user_id": body.target_user_id,
+            "execution_status": ack.get("status"),
+            "acknowledgement": ack,
+        },
+    )
+    return {
+        "status": ack.get("status", "UNKNOWN"),
+        "command_id": local_command_id,
+        "control_command_id": ack.get("command_id"),
+        "acknowledgement": ack,
+        "note": ack.get("message", ""),
+    }
 
 
 @router.get("/{room_id}/export")
-async def export_meeting(room_id: str, _: Annotated[dict, Depends(require_admin)]) -> dict:
+async def export_meeting(room_id: str, _: Annotated[dict, Depends(require_permission("meetings.read"))]) -> dict:
     room = await get_db()["rooms"].find_one({"room_id": room_id})
     if not room:
         raise HTTPException(status_code=404, detail="Meeting not found")
@@ -87,7 +180,7 @@ async def export_meeting(room_id: str, _: Annotated[dict, Depends(require_admin)
 
 
 @router.get("/{room_id}/logs")
-async def meeting_logs(room_id: str, _: Annotated[dict, Depends(require_admin)]) -> dict:
+async def meeting_logs(room_id: str, _: Annotated[dict, Depends(require_permission("meetings.read"))]) -> dict:
     rows = await get_db()["translation_logs"].find({"room_id": room_id}, {"_id": 0}).sort("timestamp", -1).limit(200).to_list(length=200)
     for row in rows:
         if isinstance(row.get("timestamp"), datetime):

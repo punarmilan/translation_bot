@@ -37,6 +37,7 @@ export default function TranslationPanel({
   ttsStatus,
   onChangeListenerMode,
   onPlaybackStateChange,
+  disabled = false,
 }) {
   const audioEnabled =
     listenerMode === "translated_audio_only" ||
@@ -62,6 +63,7 @@ export default function TranslationPanel({
           onChange={(event) => onChangeListenerMode(event.target.value)}
           className="ui-input text-sm"
           aria-label="Translation listening preference"
+          disabled={disabled}
         >
           {LISTENER_MODE_OPTIONS.map((option) => (
             <option key={option.value} value={option.value}>
@@ -111,12 +113,17 @@ export default function TranslationPanel({
           {error}
         </div>
       )}
+      {disabled && (
+        <div role="status" className="mt-2 rounded-control bg-ui-error/10 px-3 py-2 text-xs leading-5 text-ui-error">
+          Translation controls are disabled by an administrator.
+        </div>
+      )}
       {status && <p className="mt-3 text-xs leading-5 text-ui-muted">{status}</p>}
       {ttsStatus && <p className="mt-1 text-xs leading-5 text-ui-muted">{ttsStatus}</p>}
 
       <TranslatedAudioPlayer
         audioItems={audioItems}
-        enabled={audioEnabled}
+        enabled={audioEnabled && !disabled}
         onPlaybackStateChange={onPlaybackStateChange}
       />
 

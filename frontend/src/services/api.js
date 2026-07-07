@@ -87,16 +87,6 @@ export async function getRoomMessages(roomId, limit = 50) {
   return data;
 }
 
-export async function getAdminUsers() {
-  const { data } = await client.get("/admin/users");
-  return data;
-}
-
-export async function getAllRoomStats() {
-  const { data } = await client.get("/rooms/stats");
-  return data;
-}
-
 export async function getSttStatus() {
   const { data } = await client.get("/stt/status");
   return data;

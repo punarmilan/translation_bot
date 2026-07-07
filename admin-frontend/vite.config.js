@@ -3,5 +3,11 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  base: "/",
+  base: "/admin/",
+  server: {
+    proxy: {
+      "/api": "http://127.0.0.1:8010",
+      "/admin-media": "http://127.0.0.1:8010",
+    },
+  },
 });

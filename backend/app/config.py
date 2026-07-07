@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     LIBRETRANSLATE_URL: str = "http://127.0.0.1:5000"
+    REDIS_URL: str = "redis://localhost:6379/0"
+    CONTROL_PLANE_SECRET: str = "replace-with-shared-control-plane-secret"
+    CONTROL_PLANE_REDIS_TIMEOUT_SECONDS: float = 3.0
     TRANSLATION_TIMEOUT_SECONDS: float = 8.0
     TRANSLATION_CACHE_MAX_SIZE: int = 512
     MIN_DETECTION_CONFIDENCE: float = 0.72

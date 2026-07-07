@@ -1,8 +1,6 @@
 # Admin Frontend
 
-Independent React/Vite administration portal for Translation Bot.
-
-## Development
+Independent React/Vite SaaS administration portal.
 
 ```powershell
 cd admin-frontend
@@ -11,15 +9,17 @@ Copy-Item .env.example .env
 npm run dev
 ```
 
-The portal opens at `http://localhost:5176/admin/login` and expects the admin
-API at `http://127.0.0.1:8010` by default.
+Open `http://localhost:5176/admin/login`.
 
-Only an existing user whose current MongoDB role is `admin` can enter. The
-portal stores its token under a separate `admin_access_token` browser key.
+Initial registration is available at `http://localhost:5176/admin/signup` and
+requires `ADMIN_BOOTSTRAP_CODE` from the admin backend. Once an administrator
+exists, registration becomes invitation-only.
 
-## Production routing
+The browser does not store admin JWTs in local storage. The admin API issues
+host-only HttpOnly access and rotating refresh cookies. Axios sends cookies
+with credentials and performs one refresh attempt after an expired access
+session.
 
-Build with `npm run build`, then configure the web server so `/admin/*` falls
-back to the admin build's `index.html`. Route `/admin/api/*` or a dedicated API
-subdomain to `admin-backend`. The public meeting frontend remains a separate
-deployment.
+Production builds use `npm run build`. Configure the static host so
+`/admin/*` falls back to `index.html`, and reverse-proxy `/api/admin/*` to the
+admin backend.

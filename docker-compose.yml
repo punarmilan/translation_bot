@@ -8,6 +8,13 @@ services:
     volumes:
       - mongodb_data:/data/db
 
+  redis:
+    image: redis:7-alpine
+    container_name: multilingual-chat-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
   libretranslate:
     image: libretranslate/libretranslate:latest
     container_name: multilingual-chat-libretranslate

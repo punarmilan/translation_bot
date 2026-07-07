@@ -10,7 +10,9 @@ from app.repositories.message_repository import MessageRepository
 from app.repositories.room_repository import RoomRepository
 from app.repositories.translation_log_repository import TranslationLogRepository
 from app.repositories.user_repository import UserRepository
+from app.routes import manager as websocket_manager
 from app.routes import router as websocket_router
+from app.control_consumer import ControlConsumer
 
 
 @asynccontextmanager
@@ -21,7 +23,10 @@ async def lifespan(app: FastAPI):
     await RoomRepository(db).create_indexes()
     await MessageRepository(db).create_indexes()
     await TranslationLogRepository(db).create_indexes()
+    app.state.control_consumer = ControlConsumer(websocket_manager)
+    app.state.control_consumer.start()
     yield
+    await app.state.control_consumer.stop()
     await disconnect_db()
 
 
@@ -41,6 +46,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(auth_router, prefix="/api", include_in_schema=False)
 app.include_router(websocket_router)
 
 
