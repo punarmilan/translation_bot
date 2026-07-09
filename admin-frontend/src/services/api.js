@@ -105,6 +105,10 @@ export async function getModule(module, params) {
   return (await api.get(`/api/admin/${module}`, { params })).data;
 }
 
+export async function exportAuditLogs(params) {
+  return (await api.get("/api/admin/logs/export.csv", { params, responseType: "blob" })).data;
+}
+
 export async function createModuleItem(module, body) {
   return (await api.post(`/api/admin/${module}`, body)).data;
 }
@@ -123,6 +127,14 @@ export async function updateModuleSettings(module, values) {
 
 export async function updateRole(key, values) {
   return (await api.patch(`/api/admin/roles/${key}`, { values })).data;
+}
+
+export async function createRole(body) {
+  return (await api.post("/api/admin/roles", body)).data;
+}
+
+export async function deleteRole(key) {
+  return (await api.delete(`/api/admin/roles/${key}`)).data;
 }
 
 export async function uploadMedia(formData) {

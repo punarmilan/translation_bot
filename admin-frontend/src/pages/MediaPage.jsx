@@ -20,31 +20,46 @@ export default function MediaPage() {
   const uploadRef = useRef(null);
   const replaceRef = useRef(null);
   const replaceTarget = useRef(null);
-  const load = () => getModule("media", { search }).then((data) => setItems(data.items || []));
+  const [loading, setLoading] = useState(true);
+  const load = () => {
+    setLoading(true);
+    return getModule("media", { search })
+      .then((data) => { setItems(data.items || []); setMessage(""); })
+      .catch((error) => setMessage(error.response?.data?.detail || "Could not load media"))
+      .finally(() => setLoading(false));
+  };
   useEffect(load, []);
 
   const sendFile = async (file) => {
     const form = new FormData(); form.append("file", file); form.append("alt_text", "");
-    await uploadMedia(form); setMessage("Media uploaded"); load();
+    try { await uploadMedia(form); setMessage("Media uploaded"); load(); }
+    catch (error) { setMessage(error.response?.data?.detail || "Upload failed"); }
   };
   const replace = async (file) => {
     const form = new FormData(); form.append("file", file);
-    await replaceMedia(replaceTarget.current.media_id, form); setMessage("Media replaced"); load();
+    try { await replaceMedia(replaceTarget.current.media_id, form); setMessage("Media replaced"); load(); }
+    catch (error) { setMessage(error.response?.data?.detail || "Replace failed"); }
   };
   const remove = async (item) => {
     if (!window.confirm(`Delete ${item.original_name}?`)) return;
-    await deleteModuleItem("media", item.media_id); load();
+    try { await deleteModuleItem("media", item.media_id); load(); }
+    catch (error) { setMessage(error.response?.data?.detail || "Delete failed"); }
   };
   const compress = async (item) => {
-    await transformMedia(item.media_id, { operation: "compress", quality: 78 }); setMessage("Image compressed"); load();
+    try { await transformMedia(item.media_id, { operation: "compress", quality: 78 }); setMessage("Image compressed"); load(); }
+    catch (error) { setMessage(error.response?.data?.detail || "Compression failed"); }
   };
   const applyCrop = async () => {
-    await transformMedia(cropTarget.media_id, { operation: "crop", ...crop });
-    setCropTarget(null); setMessage("Image cropped"); load();
+    try {
+      await transformMedia(cropTarget.media_id, { operation: "crop", ...crop });
+      setCropTarget(null); setMessage("Image cropped"); load();
+    } catch (error) { setMessage(error.response?.data?.detail || "Crop failed"); }
   };
   const saveMetadata = async () => {
-    await updateMedia(editing.media_id, { original_name: editing.original_name, alt_text: editing.alt_text || "", folder: editing.folder || "" });
-    setEditing(null); setMessage("Media updated"); load();
+    try {
+      await updateMedia(editing.media_id, { original_name: editing.original_name, alt_text: editing.alt_text || "", folder: editing.folder || "" });
+      setEditing(null); setMessage("Media updated"); load();
+    } catch (error) { setMessage(error.response?.data?.detail || "Metadata save failed"); }
   };
 
   return <>
@@ -55,7 +70,7 @@ export default function MediaPage() {
     <section className="admin-toolbar"><label><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => event.key === "Enter" && load()} placeholder="Search assets" /></label><button className="admin-button admin-button--secondary" onClick={load}>Search</button></section>
     <input ref={uploadRef} hidden type="file" accept="image/*,video/*,.pdf,.docx,.txt" onChange={(event) => event.target.files?.[0] && sendFile(event.target.files[0])} />
     <input ref={replaceRef} hidden type="file" onChange={(event) => event.target.files?.[0] && replace(event.target.files[0])} />
-    {items.length === 0 ? <EmptyState title="No media uploaded" description="Upload the first asset for website content." /> :
+    {loading ? <div className="admin-skeleton" /> : items.length === 0 ? <EmptyState title="No media uploaded" description="Upload the first asset for website content." /> :
       <section className="admin-media-grid">{items.map((item) => <article key={item.media_id}>
         <div className="admin-media-preview">{item.content_type?.startsWith("image/") ? <img src={`${import.meta.env.VITE_ADMIN_API_URL || ""}${item.url}`} alt={item.alt_text || item.original_name} /> : iconFor(item.content_type)}</div>
         <div className="admin-media-meta"><strong>{item.original_name}</strong><small>{item.content_type} · {Math.ceil(item.size / 1024)} KB</small></div>

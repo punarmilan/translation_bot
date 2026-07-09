@@ -87,6 +87,28 @@ class SettingsUpdate(BaseModel):
     values: dict[str, Any]
 
 
+class FeedbackCreate(BaseModel):
+    type: Literal["bug", "feature", "rating"] = "bug"
+    title: str = Field(min_length=2, max_length=180)
+    description: str = Field(min_length=2, max_length=2000)
+    rating: int | None = Field(default=None, ge=1, le=5)
+    screenshot_url: str | None = None
+    reporter_email: str | None = None
+
+
+class FeedbackUpdate(BaseModel):
+    status: Literal["new", "reviewing", "resolved", "closed"] | None = None
+    assigned_to: str | None = None
+    reply: str | None = Field(default=None, max_length=2000)
+
+
+class RoleCreate(BaseModel):
+    key: str = Field(min_length=2, max_length=80)
+    name: str = Field(min_length=2, max_length=120)
+    description: str = ""
+    permissions: list[str] = Field(default_factory=list)
+
+
 async def seed_keyed(collection: str, defaults: list[dict]) -> None:
     repo = PlatformRepository(get_db())
     for default in defaults:
@@ -252,9 +274,33 @@ async def list_feedback(
     return {"items": [serialize(item) for item in await PlatformRepository(get_db()).list("feedback", query, limit)]}
 
 
+@router.post("/feedback", status_code=201)
+async def create_feedback(body: FeedbackCreate, admin: Annotated[dict, Depends(require_permission("feedback.write"))]) -> dict:
+    item = await PlatformRepository(get_db()).create("feedback", {**body.model_dump(), "status": "new", "replies": []})
+    await AuditRepository(get_db()).record(str(admin["_id"]), "feedback.create", "feedback", str(item["_id"]))
+    return serialize(item)
+
+
+@public_router.post("/feedback", status_code=201)
+async def submit_feedback(body: FeedbackCreate) -> dict:
+    item = await PlatformRepository(get_db()).create("feedback", {**body.model_dump(), "status": "new", "replies": []})
+    return {"status": "received", "feedback_id": str(item["_id"])}
+
+
 @router.patch("/feedback/{feedback_id}")
-async def update_feedback(feedback_id: str, body: GenericUpdate, admin: Annotated[dict, Depends(require_permission("feedback.write"))]) -> dict:
-    item = await PlatformRepository(get_db()).update("feedback", feedback_id, body.model_dump(exclude_none=True))
+async def update_feedback(feedback_id: str, body: FeedbackUpdate, admin: Annotated[dict, Depends(require_permission("feedback.write"))]) -> dict:
+    changes = body.model_dump(exclude_none=True)
+    if body.reply:
+        existing = await PlatformRepository(get_db()).update("feedback", feedback_id, changes)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Feedback not found")
+        await get_db()["feedback"].update_one(
+            {"_id": existing["_id"]},
+            {"$push": {"replies": {"actor_id": str(admin["_id"]), "body": body.reply, "created_at": datetime.now(timezone.utc)}}},
+        )
+        item = await get_db()["feedback"].find_one({"_id": existing["_id"]})
+    else:
+        item = await PlatformRepository(get_db()).update("feedback", feedback_id, changes)
     if not item:
         raise HTTPException(status_code=404, detail="Feedback not found")
     await AuditRepository(get_db()).record(str(admin["_id"]), "feedback.update", "feedback", feedback_id)
@@ -281,6 +327,30 @@ async def update_role(key: str, body: SettingsUpdate, admin: Annotated[dict, Dep
     item = await PlatformRepository(get_db()).upsert_by_key("admin_roles", key, body.values)
     await AuditRepository(get_db()).record(str(admin["_id"]), "role.update", "admin_role", key)
     return serialize(item)
+
+
+@router.post("/roles", status_code=201)
+async def create_role(body: RoleCreate, admin: Annotated[dict, Depends(require_permission("roles.write"))]) -> dict:
+    invalid = set(body.permissions) - ALL_ADMIN_PERMISSIONS
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Unknown permissions: {', '.join(sorted(invalid))}")
+    if await PlatformRepository(get_db()).get_by_key("admin_roles", body.key):
+        raise HTTPException(status_code=409, detail="Role key already exists")
+    item = await PlatformRepository(get_db()).create("admin_roles", body.model_dump())
+    await AuditRepository(get_db()).record(str(admin["_id"]), "role.create", "admin_role", body.key)
+    return serialize(item)
+
+
+@router.delete("/roles/{key}")
+async def delete_role(key: str, admin: Annotated[dict, Depends(require_permission("roles.write"))]) -> dict:
+    item = await PlatformRepository(get_db()).get_by_key("admin_roles", key)
+    if not item:
+        raise HTTPException(status_code=404, detail="Role not found")
+    if item.get("system"):
+        raise HTTPException(status_code=400, detail="System roles cannot be deleted")
+    await get_db()["admin_roles"].delete_one({"key": key})
+    await AuditRepository(get_db()).record(str(admin["_id"]), "role.delete", "admin_role", key)
+    return {"status": "deleted", "key": key}
 
 
 @router.get("/analytics")

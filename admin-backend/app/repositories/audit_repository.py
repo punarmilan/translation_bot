@@ -21,5 +21,15 @@ class AuditRepository:
             "timestamp": datetime.now(timezone.utc),
         })
 
-    async def list(self, limit: int = 100) -> list[dict]:
-        return await self.collection.find({}).sort("timestamp", -1).limit(limit).to_list(length=limit)
+    async def list(self, limit: int = 100, search: str = "", action: str | None = None) -> list[dict]:
+        query: dict = {}
+        if action:
+            query["action"] = action
+        if search:
+            query["$or"] = [
+                {"action": {"$regex": search, "$options": "i"}},
+                {"target_type": {"$regex": search, "$options": "i"}},
+                {"target_id": {"$regex": search, "$options": "i"}},
+                {"actor_id": {"$regex": search, "$options": "i"}},
+            ]
+        return await self.collection.find(query).sort("timestamp", -1).limit(limit).to_list(length=limit)
