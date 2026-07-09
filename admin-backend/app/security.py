@@ -53,8 +53,8 @@ def create_admin_token(admin: dict, token_use: str, session_id: str | None = Non
         "token_use": token_use,
         "jti": secrets.token_urlsafe(32),
         "sid": session_id or secrets.token_urlsafe(24),
-        "iat": now,
-        "exp": now + lifetime,
+        "iat": int(now.timestamp()),
+        "exp": int((now + lifetime).timestamp()),
         "iss": settings.ADMIN_TOKEN_ISSUER,
         "aud": settings.ADMIN_TOKEN_AUDIENCE,
     }
