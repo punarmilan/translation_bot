@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from jose import JWTError, jwt
+import jwt
 from passlib.context import CryptContext
 
 from app.config import get_settings
@@ -42,5 +42,5 @@ def decode_token(token: str) -> Optional[dict]:
         if payload.get("type") != "user" or payload.get("token_use") != "access":
             return None
         return payload
-    except JWTError:
+    except jwt.InvalidTokenError:
         return None

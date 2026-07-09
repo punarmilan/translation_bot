@@ -5,7 +5,7 @@ from typing import Annotated
 
 from bson import ObjectId
 from fastapi import Cookie, Depends, HTTPException, Request, status
-from jose import JWTError, jwt
+import jwt
 from passlib.context import CryptContext
 
 from app.config import get_settings
@@ -72,7 +72,7 @@ def decode_admin_token(token: str, expected_use: str) -> dict | None:
             audience=settings.ADMIN_TOKEN_AUDIENCE,
             issuer=settings.ADMIN_TOKEN_ISSUER,
         )
-    except JWTError:
+    except jwt.InvalidTokenError:
         return None
     if claims.get("type") != "admin" or claims.get("token_use") != expected_use:
         return None
