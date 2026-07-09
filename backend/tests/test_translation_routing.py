@@ -45,9 +45,9 @@ class TranslationRoutingTest(unittest.IsolatedAsyncioTestCase):
             "hindi": FakeWebSocket(),
             "marathi": FakeWebSocket(),
         }
-        await self.manager.connect(sockets["english"], "room", "English User", "en")
-        await self.manager.connect(sockets["hindi"], "room", "Hindi User", "hi")
-        await self.manager.connect(sockets["marathi"], "room", "Marathi User", "mr")
+        await self.manager.connect(sockets["english"], "room", None, "English User", "en")
+        await self.manager.connect(sockets["hindi"], "room", None, "Hindi User", "hi")
+        await self.manager.connect(sockets["marathi"], "room", None, "Marathi User", "mr")
         await drain_sender_queues(self.manager)
         for socket in sockets.values():
             socket.sent.clear()
