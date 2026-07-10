@@ -70,5 +70,11 @@ if ! "${compose[@]}" up -d --remove-orphans --wait --wait-timeout 1200; then
   exit 1
 fi
 
+# The Caddyfile is bind-mounted, so config changes need an explicit graceful reload
+if ! "${compose[@]}" exec -T caddy caddy reload --config /etc/caddy/Caddyfile; then
+  echo "Caddy config reload failed; the running proxy may be using a stale configuration." >&2
+  exit 1
+fi
+
 "${compose[@]}" ps
 echo "Deployment completed: ${image_prefix}:${image_tag}"
