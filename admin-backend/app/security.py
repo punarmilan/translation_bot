@@ -5,7 +5,7 @@ from typing import Annotated
 
 from bson import ObjectId
 from fastapi import Cookie, Depends, HTTPException, Request, status
-from jose import JWTError, jwt
+import jwt
 from passlib.context import CryptContext
 
 from app.config import get_settings
@@ -53,8 +53,8 @@ def create_admin_token(admin: dict, token_use: str, session_id: str | None = Non
         "token_use": token_use,
         "jti": secrets.token_urlsafe(32),
         "sid": session_id or secrets.token_urlsafe(24),
-        "iat": now,
-        "exp": now + lifetime,
+        "iat": int(now.timestamp()),
+        "exp": int((now + lifetime).timestamp()),
         "iss": settings.ADMIN_TOKEN_ISSUER,
         "aud": settings.ADMIN_TOKEN_AUDIENCE,
     }
@@ -72,7 +72,7 @@ def decode_admin_token(token: str, expected_use: str) -> dict | None:
             audience=settings.ADMIN_TOKEN_AUDIENCE,
             issuer=settings.ADMIN_TOKEN_ISSUER,
         )
-    except JWTError:
+    except jwt.InvalidTokenError:
         return None
     if claims.get("type") != "admin" or claims.get("token_use") != expected_use:
         return None

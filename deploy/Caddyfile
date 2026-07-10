@@ -46,7 +46,12 @@ admin.giftme.watch {
 	@health path /healthz
 	respond @health "ok" 200
 
-	handle_path /api/* {
+	# Backend routes carry the /api prefix themselves; media files are mounted at /admin-media
+	handle /api/* {
+		reverse_proxy admin-backend:8010
+	}
+
+	handle /admin-media/* {
 		reverse_proxy admin-backend:8010
 	}
 

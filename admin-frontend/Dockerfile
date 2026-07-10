@@ -7,7 +7,7 @@ RUN npm ci
 
 COPY . .
 
-ARG VITE_ADMIN_API_URL=https://admin.giftme.watch/api
+ARG VITE_ADMIN_API_URL=https://admin.giftme.watch
 ENV VITE_ADMIN_API_URL=${VITE_ADMIN_API_URL}
 
 RUN npm run build

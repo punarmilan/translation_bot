@@ -55,6 +55,9 @@ fi
 
 if ! "${compose[@]}" up -d --remove-orphans --wait --wait-timeout 1200; then
   echo "Deployment health check failed." >&2
+  echo "Listeners currently bound to ports 80/443 (a host service such as nginx here must be stopped before Caddy can start):" >&2
+  ss -ltnp 'sport = :80' >&2 || true
+  ss -ltnp 'sport = :443' >&2 || true
   if restore_release; then
     echo "Rolling back to the previous image tag..." >&2
     compose=(docker compose --env-file .env --env-file "${release_file}" -f "${compose_file}")
@@ -64,6 +67,12 @@ if ! "${compose[@]}" up -d --remove-orphans --wait --wait-timeout 1200; then
     echo "No previous release is available for rollback." >&2
     rm -f "${release_file}"
   fi
+  exit 1
+fi
+
+# The Caddyfile is bind-mounted, so config changes need an explicit graceful reload
+if ! "${compose[@]}" exec -T caddy caddy reload --config /etc/caddy/Caddyfile; then
+  echo "Caddy config reload failed; the running proxy may be using a stale configuration." >&2
   exit 1
 fi
 
