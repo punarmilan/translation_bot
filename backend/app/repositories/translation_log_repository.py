@@ -14,16 +14,27 @@ class TranslationLogRepository:
     async def log(
         self,
         room_id: str,
+        speaker: str,
         source_language: str,
         target_language: str,
+        transcript: str,
+        translated_text: str,
+        latency_ms: int,
+        cache_hit: bool,
+        voice_model: str | None,
         translation_success: bool,
-        cache_hit: bool = False,
     ) -> None:
         await self.collection.insert_one({
             "room_id": room_id,
+            "speaker": speaker,
             "source_language": source_language,
             "target_language": target_language,
-            "translation_success": translation_success,
+            "transcript": transcript,
+            "translated_text": translated_text,
+            "latency_ms": latency_ms,
             "cache_hit": cache_hit,
+            "voice_model": voice_model,
+            "translation_success": translation_success,
             "timestamp": datetime.utcnow(),
         })
+

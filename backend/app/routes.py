@@ -185,9 +185,10 @@ async def websocket_room_chat(
     user_id = str(current_user["_id"])
     authenticated_username = current_user["username"]
     requested_language = normalize_language(user_lang)
+    from app.runtime_settings import runtime_settings
     authenticated_language = (
         requested_language
-        if requested_language in SUPPORTED_LANGUAGES
+        if requested_language in runtime_settings.enabled_languages
         else normalize_language(current_user.get("preferred_language", "en"))
     )
     authenticated_role = current_user.get("role", "participant")
@@ -522,3 +523,73 @@ async def room_messages(
         }
         for m in messages
     ]
+
+
+@router.get("/api/public/feature-flags")
+async def public_feature_flags() -> dict:
+    from app.runtime_settings import runtime_settings
+    return {"features": runtime_settings.feature_flags}
+
+
+@router.get("/api/public/languages")
+async def public_languages() -> dict:
+    db = get_db()
+    cursor = db["platform_languages"].find({"enabled": {"$ne": False}})
+    rows = await cursor.to_list(length=200)
+    items = []
+    for row in rows:
+        code = row.get("code") or row.get("key")
+        items.append({
+            "code": code,
+            "name": row.get("name") or code.upper(),
+            "native_name": row.get("native_name") or row.get("name") or code.upper(),
+            "flag": row.get("flag") or "",
+            "translation_enabled": row.get("translation_enabled", True),
+            "stt_enabled": row.get("stt_enabled", True),
+            "tts_enabled": row.get("tts_enabled", True)
+        })
+    return {"items": items}
+
+
+@router.get("/api/public/content")
+async def public_content() -> dict:
+    db = get_db()
+    cursor = db["admin_content"].find({"status": "published"})
+    items = await cursor.to_list(length=100)
+    return {"items": [{"key": item["key"], "content": item.get("content", {}), "version": item.get("version", 1)} for item in items]}
+
+
+@router.get("/api/public/translation-settings")
+async def public_translation_settings() -> dict:
+    from app.runtime_settings import runtime_settings
+    safe_keys = {
+        "cache_timeout_seconds",
+        "translation_timeout_seconds",
+        "retry_count",
+        "maximum_latency_ms",
+        "fallback_language",
+        "segment_silence_ms",
+        "max_segment_seconds",
+        "tts_profile",
+        "auto_play_translated_audio"
+    }
+    values = runtime_settings.translation_settings
+    return {"values": {key: value for key, value in values.items() if key in safe_keys}}
+
+
+@router.get("/api/public/settings")
+async def public_settings() -> dict:
+    from app.runtime_settings import runtime_settings
+    public_keys = {
+        "product_name",
+        "support_email",
+        "maintenance_mode",
+        "default_language",
+        "site_title",
+        "logo_url",
+        "theme",
+        "stun_server"
+    }
+    values = runtime_settings.general_settings
+    return {"values": {key: value for key, value in values.items() if key in public_keys}}
+

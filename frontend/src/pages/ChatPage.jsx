@@ -9,6 +9,7 @@ import {
   parseApiError,
   synthesizeTts,
   warmupStt,
+  getFeatureFlags,
 } from "../services/api";
 
 const API_HOST = window.location.hostname || "localhost";
@@ -60,6 +61,7 @@ const ADMIN_CONTROL_TYPES = new Set([
   "system_notification",
   "force_logout",
   "room_policy",
+  "feature_flag_update",
 ]);
 
 function formatTime(timestamp) {
@@ -431,6 +433,13 @@ export default function ChatPage() {
   const [chatEnabled, setChatEnabled] = useState(true);
   const [translationEnabledByAdmin, setTranslationEnabledByAdmin] = useState(true);
   const [roomLocked, setRoomLocked] = useState(false);
+  const [featureFlags, setFeatureFlags] = useState({
+    video_calling: true,
+    voice_translation: true,
+    live_captions: true,
+    recording: true,
+    screen_sharing: true,
+  });
 
   const socketRef = useRef(null);
   const listEndRef = useRef(null);
@@ -648,6 +657,17 @@ export default function ChatPage() {
       setRoomLocked(Boolean(payload.locked));
       setChatEnabled(payload.chat_enabled !== false);
       setTranslationEnabledByAdmin(payload.translation_enabled !== false);
+      return true;
+    }
+    if (payload.type === "feature_flag_update") {
+      setFeatureFlags((current) => ({
+        ...current,
+        [payload.key]: payload.enabled,
+      }));
+      if (payload.key === "voice_translation" && !payload.enabled) {
+        setTranslationEnabledByAdmin(false);
+        stopVoiceTranscription();
+      }
       return true;
     }
     if (payload.type === "room_locked" || payload.type === "room_unlocked") {
@@ -1272,6 +1292,21 @@ export default function ChatPage() {
   };
 
   useEffect(() => {
+    let active = true;
+    getFeatureFlags()
+      .then((data) => {
+        if (active && data?.features) {
+          setFeatureFlags(data.features);
+          if (data.features.voice_translation === false) {
+            setTranslationEnabledByAdmin(false);
+          }
+        }
+      })
+      .catch((err) => console.warn("Failed to fetch feature flags", err));
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
     if (!session) return undefined;
     let active = true;
     intentionalCloseRef.current = false;
@@ -1671,7 +1706,7 @@ export default function ChatPage() {
             callStatus={callStatus}
             callError={callError}
             connectedPeers={connectedPeers}
-            canStartCall={userRole === "host" || userRole === "admin"}
+            canStartCall={featureFlags.video_calling && (userRole === "host" || userRole === "admin")}
             onStart={startAudioCall}
             onJoin={joinAudioCall}
             onLeave={leaveAudioCall}
@@ -1817,7 +1852,7 @@ export default function ChatPage() {
           remoteStreams={remoteStreams}
           members={members}
           localLabel={user.name || user.username}
-          canStartCall={userRole === "host" || userRole === "admin"}
+          canStartCall={featureFlags.video_calling && (userRole === "host" || userRole === "admin")}
           onStartVideo={startVideoCall}
           onJoinVideo={joinVideoCall}
           onLeave={leaveAudioCall}
@@ -1825,6 +1860,7 @@ export default function ChatPage() {
           onToggleCamera={toggleCamera}
           muteRemoteAudio={originalAudioMuted}
           translationStatuses={participantTranslationStatus}
+          videoCallingEnabled={featureFlags.video_calling}
         />
 
         <div className="meeting-scroll flex-1 space-y-3 overflow-y-auto px-4 py-5 sm:px-6">

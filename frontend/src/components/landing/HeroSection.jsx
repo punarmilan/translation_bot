@@ -65,19 +65,25 @@ function MeetingMockup() {
   );
 }
 
-export default function HeroSection({ user }) {
+export default function HeroSection({ user, cms }) {
+  const kicker = cms?.eyebrow || "Meet naturally across languages";
+  const title = cms?.title || "Speak Your Language. Everyone Else Will Understand.";
+  const body = cms?.body || "AI-powered multilingual meetings with live voice translation, captions, and seamless collaboration.";
+  const primaryBtn = cms?.primary_button || (user ? "Open workspace" : "Get started");
+  const secondaryBtn = cms?.secondary_button || "Explore features";
+
   return (
     <section id="top" className="hero-section">
       <div className="landing-shell hero-grid">
         <div className="hero-copy reveal">
-          <span className="hero-kicker">Meet naturally across languages</span>
-          <h1>Speak Your Language.<br />Everyone Else Will Understand.</h1>
-          <p>AI-powered multilingual meetings with live voice translation, captions, and seamless collaboration.</p>
+          <span className="hero-kicker">{kicker}</span>
+          <h1>{title}</h1>
+          <p>{body}</p>
           <div className="hero-actions">
             <Link to={user ? "/chat" : "/signup"} className="button button--primary button--large">
-              {user ? "Open workspace" : "Get started"}
+              {primaryBtn}
             </Link>
-            <Link to="/features" className="button button--secondary button--large">Explore features</Link>
+            <Link to="/features" className="button button--secondary button--large">{secondaryBtn}</Link>
             <Link to="/how-it-works" className="button button--quiet button--large">See how it works</Link>
           </div>
           <div className="hero-proof">

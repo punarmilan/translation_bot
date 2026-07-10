@@ -1,4 +1,6 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { getPublicContent } from "../services/api";
 import {
   AudioLines,
   BriefcaseBusiness,
@@ -176,12 +178,25 @@ function ExperienceDiagram() {
 
 export default function LandingPage() {
   const { user } = useAuth();
+  const [content, setContent] = useState({});
+
+  useEffect(() => {
+    getPublicContent()
+      .then((res) => {
+        const mapped = {};
+        res.items.forEach((item) => {
+          mapped[item.key] = item.content;
+        });
+        setContent(mapped);
+      })
+      .catch((err) => console.warn("Failed to load public CMS content", err));
+  }, []);
 
   return (
     <div className="landing-page">
       <Navbar user={user} />
       <main>
-        <HeroSection user={user} />
+        <HeroSection user={user} cms={content["landing.hero"]} />
 
         <section className="trust-section section-band">
           <div className="landing-shell">
@@ -336,9 +351,19 @@ export default function LandingPage() {
               <p>These examples are clearly labelled demo content and are not presented as customer endorsements.</p>
             </header>
             <div className="testimonial-grid">
-              <TestimonialCard initials="DE" name="Demo educator" role="International classroom" quote="Students can follow the original speaker while reading the same idea in their preferred language." />
-              <TestimonialCard initials="DT" name="Demo team lead" role="Distributed product team" quote="Captions, chat, and voice translation stay in the same meeting instead of becoming separate tools." />
-              <TestimonialCard initials="DS" name="Demo support lead" role="Multilingual customer support" quote="Language-aware routing makes it easier to serve customers without losing the original context." />
+              {(content["landing.testimonials"]?.items || [
+                { initials: "DE", name: "Demo educator", role: "International classroom", quote: "Students can follow the original speaker while reading the same idea in their preferred language." },
+                { initials: "DT", name: "Demo team lead", role: "Distributed product team", quote: "Captions, chat, and voice translation stay in the same meeting instead of becoming separate tools." },
+                { initials: "DS", name: "Demo support lead", role: "Multilingual customer support", quote: "Language-aware routing makes it easier to serve customers without losing the original context." }
+              ]).map((item, idx) => (
+                <TestimonialCard
+                  key={idx}
+                  initials={item.initials || (item.name || "U")[0]}
+                  name={item.name}
+                  role={item.role}
+                  quote={item.quote}
+                />
+              ))}
             </div>
           </div>
         </section>
@@ -350,7 +375,7 @@ export default function LandingPage() {
               <h2>Questions before your first meeting</h2>
               <p>Practical answers about languages, invitations, messaging, and device support.</p>
             </header>
-            <FAQ />
+            <FAQ cms={content["site.faqs"]} />
           </div>
         </section>
 
@@ -368,7 +393,7 @@ export default function LandingPage() {
           </div>
         </section>
       </main>
-      <Footer user={user} />
+      <Footer user={user} cms={content["site.footer"]} />
     </div>
   );
 }

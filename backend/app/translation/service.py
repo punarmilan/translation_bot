@@ -145,6 +145,10 @@ class LibreTranslateProvider:
         self.timeout_seconds = timeout_seconds
 
     async def translate(self, text: str, source_lang: str, target_lang: str) -> str:
+        from app.runtime_settings import runtime_settings
+        base_url = runtime_settings.translation_settings.get("libretranslate_endpoint", self.base_url).rstrip("/")
+        timeout_seconds = float(runtime_settings.translation_settings.get("translation_timeout_seconds", self.timeout_seconds))
+
         payload = {
             "q": text,
             "source": source_lang,
@@ -152,8 +156,8 @@ class LibreTranslateProvider:
             "format": "text",
         }
 
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            response = await client.post(f"{self.base_url}/translate", json=payload)
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            response = await client.post(f"{base_url}/translate", json=payload)
             if response.status_code == 400 and source_lang != "auto":
                 payload["source"] = "auto"
                 logger.info(
@@ -168,7 +172,7 @@ class LibreTranslateProvider:
                         sort_keys=True,
                     )
                 )
-                response = await client.post(f"{self.base_url}/translate", json=payload)
+                response = await client.post(f"{base_url}/translate", json=payload)
             response.raise_for_status()
             response_payload = response.json()
 
@@ -202,9 +206,12 @@ class TranslationService:
         mixed_language: bool = False,
         context: TranslationContext | None = None,
     ) -> TranslationResult:
+        from app.runtime_settings import runtime_settings
+        supported_langs = runtime_settings.enabled_languages
+
         source = normalize_language(source_lang)
         target = normalize_language(target_lang)
-        api_source = source if source in SUPPORTED_LANGUAGES else "auto"
+        api_source = source if source in supported_langs else "auto"
 
         if not should_translate(source, target):
             result = TranslationResult(
@@ -450,9 +457,13 @@ async def detect_language_profile(
     confidence = candidates[0][1] if candidates else 0.0
     detection_source = "langdetect"
 
+    from app.runtime_settings import runtime_settings
+    supported_langs = runtime_settings.enabled_languages
+    min_confidence = float(runtime_settings.translation_settings.get("detection_confidence", MIN_DETECTION_CONFIDENCE))
+
     if (
-        normalized_hint in SUPPORTED_LANGUAGES
-        and confidence < MIN_DETECTION_CONFIDENCE
+        normalized_hint in supported_langs
+        and confidence < min_confidence
         and is_hint_compatible_with_text(text, normalized_hint)
     ):
         language = normalized_hint

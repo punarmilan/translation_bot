@@ -40,6 +40,29 @@ from app.translation.service import (
     normalize_language,
     translate_text,
 )
+from app.database import get_db
+from app.repositories.room_repository import RoomRepository
+from app.repositories.translation_log_repository import TranslationLogRepository
+from app.repositories.user_repository import UserRepository
+from bson import ObjectId
+from datetime import datetime
+
+
+def ip_to_country(ip: str, preferred_language: str) -> str:
+    lang_country_map = {
+        "en": "US",
+        "hi": "IN",
+        "es": "ES",
+        "fr": "FR",
+        "de": "DE",
+        "ar": "EG",
+        "ru": "RU",
+        "pt": "BR",
+        "it": "IT",
+        "nl": "NL",
+    }
+    return lang_country_map.get(preferred_language.split("-")[0], "US")
+
 
 
 logger = logging.getLogger(__name__)
@@ -126,6 +149,45 @@ class RoomConnectionManager:
         )
         session.sender_task = asyncio.create_task(self._sender_loop(session))
         session.voice_worker_task = asyncio.create_task(self._voice_worker(session))
+
+        # DB updates for rooms and user presence
+        db = get_db()
+        user_repo = UserRepository(db)
+        user_doc = await user_repo.get_by_id(user_id) if user_id else None
+        email = user_doc.get("email", "") if user_doc else ""
+
+        client_ip = websocket.client.host if websocket.client else "127.0.0.1"
+        country = ip_to_country(client_ip, preferred_language)
+
+        room_repo = RoomRepository(db)
+        await room_repo.upsert(room_id, room_name=room_id, host_id=user_id or "")
+        await room_repo.add_participant(
+            room_id=room_id,
+            user_id=user_id or "",
+            username=username,
+            name=name or username,
+            email=email,
+            country=country,
+        )
+        await room_repo.update_languages(room_id, preferred_language)
+
+        if user_id:
+            user_agent = websocket.headers.get("user-agent", "Unknown")
+            try:
+                await db["users"].update_one(
+                    {"_id": ObjectId(user_id)},
+                    {
+                        "$set": {
+                            "is_online": True,
+                            "last_seen": datetime.utcnow(),
+                            "meeting_id": room_id,
+                            "device": user_agent,
+                            "status": "online"
+                        }
+                    }
+                )
+            except Exception as e:
+                logger.error(f"Error setting user presence online: {e}")
 
         async with self._lock:
             room = self.rooms.setdefault(room_id, RoomState(room_id=room_id))
@@ -217,6 +279,28 @@ class RoomConnectionManager:
             session.connected = False
             peer_session_id = session.active_peer_session_id
             peer_to_notify: ClientSession | None = None
+
+            db = get_db()
+            room_repo = RoomRepository(db)
+            if session.user_id:
+                await room_repo.remove_participant(room_id, session.user_id)
+                other_sessions = [s for s in self.sessions.values() if s.user_id == session.user_id]
+                if not other_sessions:
+                    try:
+                        await db["users"].update_one(
+                            {"_id": ObjectId(session.user_id)},
+                            {
+                                "$set": {
+                                    "is_online": False,
+                                    "last_seen": datetime.utcnow(),
+                                    "meeting_id": None,
+                                    "status": "offline"
+                                }
+                            }
+                        )
+                    except Exception as e:
+                        logger.error(f"Error setting user presence offline: {e}")
+
             if room:
                 room.sessions.pop(session.session_id, None)
                 host_ended_meeting = room.meeting_host_session_id == session.session_id
@@ -231,6 +315,7 @@ class RoomConnectionManager:
                         peer_to_notify = peer
                 if not room.sessions:
                     self.rooms.pop(room_id, None)
+                    await room_repo.end_meeting(room_id)
                     stats = RoomStats(
                         room_id=room_id,
                         active_users=0,
@@ -430,6 +515,36 @@ class RoomConnectionManager:
                 target_session_id=target_session.session_id if target_session else None,
             )
 
+        # DB updates for rooms message count and translation logs
+        try:
+            db = get_db()
+            room_repo = RoomRepository(db)
+            trans_log_repo = TranslationLogRepository(db)
+            
+            await room_repo.increment_message_count(room_id)
+            for target, result in result_by_language.items():
+                if target != source_language:
+                    success = True if result.status == "success" or result.status == "skipped_same_language" else False
+                    await trans_log_repo.log(
+                        room_id=room_id,
+                        speaker=sender_session.username,
+                        source_language=source_language,
+                        target_language=target,
+                        transcript=text,
+                        translated_text=result.translated,
+                        latency_ms=0,
+                        cache_hit=result.cache_hit,
+                        voice_model=None,
+                        translation_success=success
+                    )
+                    await room_repo.update_translation_stats(
+                        room_id=room_id,
+                        success=success,
+                        cache_hit=result.cache_hit
+                    )
+        except Exception as e:
+            logger.error(f"Error persisting chat translation log/stats: {e}")
+
     async def broadcast_system(
         self,
         room_id: str,
@@ -471,7 +586,8 @@ class RoomConnectionManager:
         preferred_language: str,
     ) -> bool:
         new_language = normalize_language(preferred_language)
-        if new_language not in SUPPORTED_LANGUAGES:
+        from app.runtime_settings import runtime_settings
+        if new_language not in runtime_settings.enabled_languages:
             new_language = "en"
 
         async with self._lock:
@@ -885,6 +1001,8 @@ class RoomConnectionManager:
                         started_at=started,
                         stt_latency_ms=stt_result.latency_ms,
                         translation_latency_ms=latency_by_language.get(target_language, 0),
+                        transcript=transcript,
+                        duration_seconds=stt_result.duration_seconds,
                     )
                 )
 
@@ -927,6 +1045,8 @@ class RoomConnectionManager:
         started_at: float,
         stt_latency_ms: int,
         translation_latency_ms: int,
+        transcript: str,
+        duration_seconds: float,
     ) -> None:
         active_receivers = [receiver for receiver in receivers if receiver.connected]
         if not active_receivers:
@@ -974,6 +1094,30 @@ class RoomConnectionManager:
                 recipient_count=len(active_receivers),
                 error=str(exc),
             )
+            # Log failure to translation_logs and update stats
+            try:
+                db = get_db()
+                room_repo = RoomRepository(db)
+                trans_log_repo = TranslationLogRepository(db)
+                await trans_log_repo.log(
+                    room_id=room_id,
+                    speaker=sender.username,
+                    source_language=detected_language,
+                    target_language=target_language,
+                    transcript=transcript,
+                    translated_text=translated_text,
+                    latency_ms=int((perf_counter() - started_at) * 1000),
+                    cache_hit=False,
+                    voice_model=None,
+                    translation_success=False,
+                )
+                await room_repo.update_translation_stats(
+                    room_id=room_id,
+                    success=False,
+                    cache_hit=False
+                )
+            except Exception as e:
+                logger.error(f"Error persisting speech translation failure: {e}")
             return
 
         for receiver in active_receivers:
@@ -1027,6 +1171,33 @@ class RoomConnectionManager:
             tts_latency_ms=audio.tts_latency_ms,
             total_latency_ms=int((perf_counter() - started_at) * 1000),
         )
+
+        # Log success to translation_logs and update voice statistics
+        try:
+            db = get_db()
+            room_repo = RoomRepository(db)
+            trans_log_repo = TranslationLogRepository(db)
+            
+            await room_repo.update_voice_seconds(room_id, duration_seconds)
+            await trans_log_repo.log(
+                room_id=room_id,
+                speaker=sender.username,
+                source_language=detected_language,
+                target_language=target_language,
+                transcript=transcript,
+                translated_text=translated_text,
+                latency_ms=int((perf_counter() - started_at) * 1000),
+                cache_hit=False,
+                voice_model=getattr(audio, "selected_model", None),
+                translation_success=True,
+            )
+            await room_repo.update_translation_stats(
+                room_id=room_id,
+                success=True,
+                cache_hit=False
+            )
+        except Exception as e:
+            logger.error(f"Error persisting speech translation success: {e}")
 
     async def relay_signaling(
         self,
@@ -1222,6 +1393,46 @@ class RoomConnectionManager:
         target_user_id = command.get("target_user_id")
         payload = command.get("payload") if isinstance(command.get("payload"), dict) else {}
         command_id = command.get("command_id")
+
+        # Global commands that don't target a specific room or session
+        if command_type == "UPDATE_FEATURE_FLAGS":
+            from app.runtime_settings import runtime_settings
+            key = payload.get("key")
+            enabled = payload.get("enabled", True)
+            runtime_settings.update_feature_flag(key, enabled)
+            
+            # Broadcast to all connected clients
+            broadcast_payload = json.dumps({
+                "type": "feature_flag_update",
+                "key": key,
+                "enabled": enabled,
+                "timestamp": time.time()
+            })
+            async with self._lock:
+                for session in self.sessions.values():
+                    self._enqueue(session, broadcast_payload, event="feature_flag_update")
+            return self._ack(command, "SUCCESS", f"Feature flag {key} set to {enabled} globally.")
+
+        if command_type == "UPDATE_LANGUAGE":
+            from app.runtime_settings import runtime_settings
+            code = payload.get("code")
+            enabled = payload.get("enabled", True)
+            runtime_settings.update_language(code, enabled)
+            return self._ack(command, "SUCCESS", f"Language {code} set to {enabled} globally.")
+
+        if command_type == "UPDATE_SETTINGS":
+            from app.runtime_settings import runtime_settings
+            key = payload.get("key")
+            values = payload.get("values", {})
+            runtime_settings.update_settings(key, values)
+            
+            # If Whisper model has changed, trigger STT reload!
+            if key == "translation" and "stt_model" in values:
+                from app.stt.service import stt_service
+                new_model = values["stt_model"]
+                await stt_service.update_model(new_model)
+                
+            return self._ack(command, "SUCCESS", f"Settings updated for {key} category.")
 
         async with self._lock:
             room = self.rooms.get(room_id) if room_id else None

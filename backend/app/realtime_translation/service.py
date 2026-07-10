@@ -29,6 +29,7 @@ class SynthesizedTranslationAudio:
     provider: str
     tts_latency_ms: int
     synthesis_total_ms: int
+    selected_model: str
 
 
 class RealtimeTranslationService:
@@ -77,6 +78,7 @@ class RealtimeTranslationService:
             provider=result.provider,
             tts_latency_ms=result.latency_ms,
             synthesis_total_ms=synthesis_total_ms,
+            selected_model=result.selected_model,
         )
         logger.info(
             json.dumps(

@@ -22,6 +22,7 @@ export default function VideoCall({
   onToggleCamera,
   muteRemoteAudio = false,
   translationStatuses = {},
+  videoCallingEnabled = true,
 }) {
   const callTone = inCall ? "green" : callActive ? "yellow" : "neutral";
   const callLabel = inCall
@@ -52,12 +53,12 @@ export default function VideoCall({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {!callActive && canStartCall && (
+          {!callActive && canStartCall && videoCallingEnabled && (
             <Button variant="primary" onClick={onStartVideo}>
               Join Video Call
             </Button>
           )}
-          {callActive && !inCall && (
+          {callActive && !inCall && videoCallingEnabled && (
             <Button variant="primary" onClick={onJoinVideo}>
               Join Video Call
             </Button>

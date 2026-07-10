@@ -32,6 +32,32 @@ def resolve_voice_route(
     if requested_preference not in VOICE_PREFERENCES:
         requested_preference = "auto"
 
+    # Try dynamic voice routing mapping from runtime_settings first!
+    try:
+        from app.runtime_settings import runtime_settings
+        routing = runtime_settings.voice_routing.get(requested_language, {})
+        voice_key = routing.get(requested_preference) or routing.get("auto") or routing.get("neutral")
+        if voice_key:
+            from app.tts.voices import DEFAULT_PIPER_MODEL_DIR
+            model_path = DEFAULT_PIPER_MODEL_DIR / f"{voice_key}.onnx"
+            config_path = DEFAULT_PIPER_MODEL_DIR / f"{voice_key}.onnx.json"
+            if not config_path.exists():
+                config_path = DEFAULT_PIPER_MODEL_DIR / f"{voice_key}.json"
+            
+            if model_path.exists():
+                return VoiceRoute(
+                    requested_language=requested_language,
+                    resolved_language=requested_language,
+                    requested_preference=requested_preference,
+                    resolved_preference=requested_preference,
+                    model_path=model_path,
+                    config_path=config_path,
+                    fallback_used=False,
+                    repo_model_file=f"{voice_key}.onnx",
+                )
+    except Exception:
+        pass
+
     if requested_language not in PIPER_VOICE_FILES:
         requested_language = "en"
 

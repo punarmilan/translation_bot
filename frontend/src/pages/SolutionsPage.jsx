@@ -1,8 +1,10 @@
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { getPublicContent } from "../services/api";
 import {
   BriefcaseBusiness, Building2, GraduationCap, HandHeart, Headset, HeartPulse,
   Landmark, Microscope, Plane, Presentation, Scale, Users,
 } from "lucide-react";
-import { Link } from "react-router-dom";
 import { CTASection, MarketingPage, PageHeader, SectionTitle } from "../components/marketing/MarketingPage";
 
 const solutions = [
@@ -31,9 +33,23 @@ function SolutionVisual({ Icon, image, title }) {
 }
 
 export default function SolutionsPage() {
+  const [content, setContent] = useState(null);
+
+  useEffect(() => {
+    getPublicContent()
+      .then((res) => {
+        const item = res.items.find((x) => x.key === "solutions.page");
+        if (item) setContent(item.content);
+      })
+      .catch((err) => console.warn("Failed to load solutions page content", err));
+  }, []);
+
+  const title = content?.title || "Language access for the conversations that matter";
+  const body = content?.body || "Translation Bot adapts one meeting experience to classrooms, consultations, global teams, public services, and live events.";
+
   return (
     <MarketingPage>
-      <PageHeader eyebrow="Solutions" title="Language access for the conversations that matter" description="Translation Bot adapts one meeting experience to classrooms, consultations, global teams, public services, and live events.">
+      <PageHeader eyebrow="Solutions" title={title} description={body}>
         <Link className="button button--primary button--large" to="/signup">Start a meeting</Link>
         <Link className="button button--secondary button--large" to="/features">Explore features</Link>
       </PageHeader>

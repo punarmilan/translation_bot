@@ -1,10 +1,12 @@
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { getPublicContent } from "../services/api";
 import {
   Activity, AudioLines, BarChart3, Captions, ChartNoAxesCombined, CircleGauge,
   Languages, Link2, LockKeyhole, MessageCircle, Mic, MonitorSmartphone,
   Radio, RefreshCw, ScreenShare, ShieldCheck, Sparkles, SquareUserRound,
   Users, Video, Volume2, Waves, Waypoints,
 } from "lucide-react";
-import { Link } from "react-router-dom";
 import { CTASection, MarketingPage, PageHeader, ProductMockup, SectionTitle } from "../components/marketing/MarketingPage";
 
 const flagship = [
@@ -94,9 +96,23 @@ function CapabilityCard({ item }) {
 }
 
 export default function FeaturesPage() {
+  const [content, setContent] = useState(null);
+
+  useEffect(() => {
+    getPublicContent()
+      .then((res) => {
+        const item = res.items.find((x) => x.key === "features.page");
+        if (item) setContent(item.content);
+      })
+      .catch((err) => console.warn("Failed to load features page content", err));
+  }, []);
+
+  const title = content?.title || "Meet, speak, and collaborate across languages";
+  const body = content?.body || "A complete meeting experience where video, speech, captions, chat, roles, and diagnostics work together.";
+
   return (
     <MarketingPage>
-      <PageHeader eyebrow="Product features" title="Meet, speak, and collaborate across languages" description="A complete meeting experience where video, speech, captions, chat, roles, and diagnostics work together.">
+      <PageHeader eyebrow="Product features" title={title} description={body}>
         <Link className="button button--primary button--large" to="/signup">Get started</Link>
         <Link className="button button--secondary button--large" to="/how-it-works">See how it works</Link>
       </PageHeader>

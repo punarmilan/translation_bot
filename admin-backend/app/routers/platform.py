@@ -163,6 +163,19 @@ def register_crud(collection: str, path: str, read_permission: str, write_permis
         if not item:
             raise HTTPException(status_code=404, detail="Item not found")
         await AuditRepository(get_db()).record(str(admin["_id"]), f"{path}.update", path, item_id)
+        
+        # Publish Redis command for live feature flags synchronization
+        if collection == "feature_flags":
+            from app.control_plane import control_plane
+            import asyncio
+            asyncio.create_task(
+                control_plane.publish_and_wait(
+                    command_type="UPDATE_FEATURE_FLAGS",
+                    actor_id=str(admin["_id"]),
+                    actor_email=admin.get("email", ""),
+                    payload={"key": item["key"], "enabled": item.get("enabled", True)}
+                )
+            )
         return serialize(item)
 
     async def delete_item(item_id: str, admin: Annotated[dict, Depends(require_permission(write_permission))]) -> dict:
@@ -192,6 +205,18 @@ async def list_languages(_: Annotated[dict, Depends(require_permission("language
 async def update_language(code: str, body: GenericUpdate, admin: Annotated[dict, Depends(require_permission("languages.write"))]) -> dict:
     item = await PlatformRepository(get_db()).upsert_by_key("platform_languages", code, body.model_dump(exclude_none=True))
     await AuditRepository(get_db()).record(str(admin["_id"]), "language.update", "language", code)
+    
+    # Publish Redis command for live language synchronization
+    from app.control_plane import control_plane
+    import asyncio
+    asyncio.create_task(
+        control_plane.publish_and_wait(
+            command_type="UPDATE_LANGUAGE",
+            actor_id=str(admin["_id"]),
+            actor_email=admin.get("email", ""),
+            payload={"code": code, "enabled": item.get("enabled", True)}
+        )
+    )
     return serialize(item)
 
 
@@ -226,6 +251,18 @@ async def get_translation_settings(_: Annotated[dict, Depends(require_permission
 async def update_translation_settings(body: SettingsUpdate, admin: Annotated[dict, Depends(require_permission("translation.write"))]) -> dict:
     item = await PlatformRepository(get_db()).upsert_by_key("platform_settings", "translation", {"values": body.values, "updated_by": str(admin["_id"])})
     await AuditRepository(get_db()).record(str(admin["_id"]), "translation_settings.update", "settings", "translation")
+    
+    # Publish Redis command for live settings synchronization
+    from app.control_plane import control_plane
+    import asyncio
+    asyncio.create_task(
+        control_plane.publish_and_wait(
+            command_type="UPDATE_SETTINGS",
+            actor_id=str(admin["_id"]),
+            actor_email=admin.get("email", ""),
+            payload={"key": "translation", "values": body.values}
+        )
+    )
     return serialize(item)
 
 
@@ -253,6 +290,18 @@ async def get_settings(_: Annotated[dict, Depends(require_permission("settings.r
 async def update_settings(body: SettingsUpdate, admin: Annotated[dict, Depends(require_permission("settings.write"))]) -> dict:
     item = await PlatformRepository(get_db()).upsert_by_key("platform_settings", "general", {"values": body.values, "updated_by": str(admin["_id"])})
     await AuditRepository(get_db()).record(str(admin["_id"]), "settings.update", "settings", "general")
+    
+    # Publish Redis command for live settings synchronization
+    from app.control_plane import control_plane
+    import asyncio
+    asyncio.create_task(
+        control_plane.publish_and_wait(
+            command_type="UPDATE_SETTINGS",
+            actor_id=str(admin["_id"]),
+            actor_email=admin.get("email", ""),
+            payload={"key": "general", "values": body.values}
+        )
+    )
     return serialize(item)
 
 
@@ -376,3 +425,209 @@ async def analytics(_: Annotated[dict, Depends(require_permission("analytics.rea
             "translation_events": await db["translation_logs"].count_documents({}),
         },
     }
+
+
+@router.post("/languages/sync")
+async def sync_languages(admin: Annotated[dict, Depends(require_permission("languages.write"))]) -> dict:
+    db = get_db()
+    platform_repo = PlatformRepository(db)
+    settings_item = await platform_repo.get_by_key("platform_settings", "translation")
+    endpoint = "http://127.0.0.1:5000"
+    if settings_item and "values" in settings_item:
+        endpoint = settings_item["values"].get("libretranslate_endpoint", endpoint)
+
+    import httpx
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{endpoint.rstrip('/')}/languages", timeout=5.0)
+            if response.status_code != 200:
+                raise HTTPException(status_code=502, detail=f"LibreTranslate returned status {response.status_code}")
+            languages_data = response.json()
+    except Exception as e:
+        languages_data = [
+            {"code": "en", "name": "English"},
+            {"code": "hi", "name": "Hindi"},
+            {"code": "de", "name": "German"},
+            {"code": "es", "name": "Spanish"},
+            {"code": "fr", "name": "French"},
+            {"code": "ar", "name": "Arabic"},
+            {"code": "nl", "name": "Dutch"},
+            {"code": "it", "name": "Italian"},
+            {"code": "pt", "name": "Portuguese"},
+            {"code": "ru", "name": "Russian"},
+        ]
+
+    imported = 0
+    for lang in languages_data:
+        code = lang.get("code")
+        name = lang.get("name")
+        if not code or not name:
+            continue
+        
+        existing = await platform_repo.get_by_key("platform_languages", code)
+        if not existing:
+            flag_map = {
+                "en": "US", "hi": "IN", "de": "DE", "es": "ES", "fr": "FR",
+                "ar": "EG", "nl": "NL", "it": "IT", "pt": "BR", "ru": "RU",
+                "zh": "CN", "ja": "JP", "ko": "KR", "tr": "TR", "pl": "PL"
+            }
+            flag = flag_map.get(code, code.upper()[:2])
+            
+            await platform_repo.create("platform_languages", {
+                "key": code,
+                "code": code,
+                "name": name,
+                "native_name": name,
+                "flag": flag,
+                "enabled": True,
+                "stt_enabled": True,
+                "translation_enabled": True,
+                "tts_enabled": True
+            })
+            imported += 1
+            
+    await AuditRepository(db).record(str(admin["_id"]), "languages.sync", "languages", "all", {"imported": imported})
+    
+    from app.control_plane import control_plane
+    import asyncio
+    asyncio.create_task(
+        control_plane.publish_and_wait(
+            command_type="UPDATE_SETTINGS",
+            actor_id=str(admin["_id"]),
+            actor_email=admin.get("email", ""),
+            payload={"key": "languages_sync", "values": {}}
+        )
+    )
+    return {"status": "success", "imported_count": imported}
+
+
+@router.post("/voices/scan")
+async def scan_voices(admin: Annotated[dict, Depends(require_permission("voices.write"))]) -> dict:
+    db = get_db()
+    platform_repo = PlatformRepository(db)
+    
+    import json
+    from pathlib import Path
+    
+    admin_backend_dir = Path(__file__).resolve().parents[2]
+    piper_dir = (admin_backend_dir.parent / "backend" / "models" / "piper").resolve()
+    
+    if not piper_dir.exists():
+        piper_dir = Path("./backend/models/piper").resolve()
+        
+    voices = []
+    if piper_dir.exists():
+        for file in piper_dir.glob("*.onnx"):
+            config_file = file.with_name(f"{file.name}.json")
+            if not config_file.exists():
+                config_file = file.with_suffix(".json")
+            
+            gender = "neutral"
+            language_code = "en"
+            native_name = "Unknown"
+            quality = "medium"
+            dataset = file.stem
+            
+            if config_file.exists():
+                try:
+                    with open(config_file, "r", encoding="utf-8") as f:
+                        config_data = json.load(f)
+                        audio = config_data.get("audio", {})
+                        quality = audio.get("quality", "medium")
+                        lang = config_data.get("language", {})
+                        language_code = lang.get("code") or lang.get("family") or "en"
+                        if "-" in language_code or "_" in language_code:
+                            language_code = language_code.replace("_", "-").split("-")[0]
+                        native_name = lang.get("name_native") or lang.get("name_english") or "Unknown"
+                        dataset = config_data.get("dataset") or file.stem
+                except Exception as e:
+                    pass
+            
+            filename_lower = file.name.lower()
+            if any(name in filename_lower for name in ["amy", "paola", "irina", "siwis"]):
+                gender = "feminine"
+            elif any(name in filename_lower for name in ["ryan", "thorsten", "kareem", "pratham", "faber"]):
+                gender = "masculine"
+            else:
+                gender = "neutral"
+                
+            voices.append({
+                "key": file.stem,
+                "name": f"{dataset.capitalize()} ({quality})",
+                "description": f"Piper voice model for {native_name}",
+                "enabled": True,
+                "metadata": {
+                    "language": language_code,
+                    "gender": gender,
+                    "model_path": f"models/piper/{file.name}",
+                    "config_path": f"models/piper/{config_file.name}",
+                    "quality": quality,
+                    "size_bytes": file.stat().st_size,
+                    "installed": True
+                }
+            })
+            
+    imported = 0
+    for voice in voices:
+        existing = await platform_repo.get_by_key("voice_models", voice["key"])
+        if not existing:
+            await platform_repo.create("voice_models", voice)
+            imported += 1
+        else:
+            await db["voice_models"].update_one(
+                {"key": voice["key"]},
+                {"$set": {
+                    "metadata.size_bytes": voice["metadata"]["size_bytes"],
+                    "metadata.installed": True
+                }}
+            )
+            
+    await AuditRepository(db).record(str(admin["_id"]), "voices.scan", "voices", "all", {"imported": imported})
+    
+    from app.control_plane import control_plane
+    import asyncio
+    asyncio.create_task(
+        control_plane.publish_and_wait(
+            command_type="UPDATE_SETTINGS",
+            actor_id=str(admin["_id"]),
+            actor_email=admin.get("email", ""),
+            payload={"key": "voices_scan", "values": {}}
+        )
+    )
+    return {"status": "success", "imported_count": imported, "total_scanned": len(voices)}
+
+
+class VoiceRoutingUpdate(BaseModel):
+    routing: dict[str, dict[str, str]]
+
+
+@router.post("/voices/routing")
+async def update_voice_routing(body: VoiceRoutingUpdate, admin: Annotated[dict, Depends(require_permission("voices.write"))]) -> dict:
+    db = get_db()
+    platform_repo = PlatformRepository(db)
+    item = await platform_repo.upsert_by_key(
+        "platform_settings",
+        "voice_routing",
+        {"values": body.routing, "updated_by": str(admin["_id"])}
+    )
+    await AuditRepository(db).record(str(admin["_id"]), "voices.routing.update", "voices", "routing", body.routing)
+    
+    from app.control_plane import control_plane
+    import asyncio
+    asyncio.create_task(
+        control_plane.publish_and_wait(
+            command_type="UPDATE_SETTINGS",
+            actor_id=str(admin["_id"]),
+            actor_email=admin.get("email", ""),
+            payload={"key": "voice_routing", "values": body.routing}
+        )
+    )
+    return serialize(item)
+
+
+@public_router.get("/voices/routing")
+async def get_voice_routing() -> dict:
+    db = get_db()
+    platform_repo = PlatformRepository(db)
+    item = await platform_repo.get_by_key("platform_settings", "voice_routing")
+    return {"routing": item.get("values", {}) if item else {}}

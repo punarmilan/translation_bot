@@ -1,0 +1,1 @@
+from app.meeting_memory.service import meeting_memory_service

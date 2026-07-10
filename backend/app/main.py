@@ -23,6 +23,11 @@ async def lifespan(app: FastAPI):
     await RoomRepository(db).create_indexes()
     await MessageRepository(db).create_indexes()
     await TranslationLogRepository(db).create_indexes()
+    
+    # Load settings from MongoDB
+    from app.runtime_settings import runtime_settings
+    await runtime_settings.load_from_db(db)
+
     app.state.control_consumer = ControlConsumer(websocket_manager)
     app.state.control_consumer.start()
     yield

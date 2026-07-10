@@ -116,3 +116,19 @@ export async function synthesizeTts(
   });
   return data;
 }
+
+export async function getFeatureFlags() {
+  const { data } = await client.get("/api/public/feature-flags");
+  return data;
+}
+
+export async function getPublicLanguages() {
+  const { data } = await client.get("/api/public/languages");
+  return data;
+}
+
+export async function getPublicContent() {
+  const { data } = await client.get("/api/public/content");
+  return data;
+}
+

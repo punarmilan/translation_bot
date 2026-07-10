@@ -15,6 +15,9 @@ import SettingsPage from "./pages/SettingsPage";
 import SignupPage from "./pages/SignupPage";
 import SystemHealthPage from "./pages/SystemHealthPage";
 import UsersPage from "./pages/UsersPage";
+import LanguagesPage from "./pages/LanguagesPage";
+import VoicesPage from "./pages/VoicesPage";
+import FeedbackPage from "./pages/FeedbackPage";
 
 export default function App() {
   return (
@@ -33,10 +36,10 @@ export default function App() {
           <Route path="/admin/content" element={<ContentPage />} />
           <Route path="/admin/media" element={<MediaPage />} />
           <Route path="/admin/feature-flags" element={<RegistryPage module="feature-flags" eyebrow="Delivery" title="Feature Flags" description="Control staged administration features independently from deployment." />} />
-          <Route path="/admin/languages" element={<RegistryPage module="languages" eyebrow="Localization" title="Languages" description="Manage language availability across STT, translation, and synthesized speech." canCreate={false} canDelete={false} />} />
-          <Route path="/admin/voices" element={<RegistryPage module="voices" eyebrow="Speech" title="Voice Models" description="Register and manage voice-model metadata and availability." />} />
+          <Route path="/admin/languages" element={<LanguagesPage />} />
+          <Route path="/admin/voices" element={<VoicesPage />} />
           <Route path="/admin/translation" element={<SettingsPage module="translation-settings" eyebrow="Translation" title="Translation Settings" description="Configure speech segmentation, language detection, translation timeouts, and synthesized speech defaults." />} />
-          <Route path="/admin/feedback" element={<RegistryPage module="feedback" eyebrow="Customers" title="Feedback" description="Review and triage feedback submitted by platform users." canCreate={false} canDelete={false} />} />
+          <Route path="/admin/feedback" element={<FeedbackPage />} />
           <Route path="/admin/announcements" element={<RegistryPage module="announcements" eyebrow="Communication" title="Announcements" description="Prepare and manage platform notices for users." />} />
           <Route path="/admin/roles" element={<RolesPage />} />
           <Route path="/admin/logs" element={<AuditLogsPage />} />

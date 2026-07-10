@@ -62,6 +62,18 @@ async def dashboard(_: Annotated[dict, Depends(require_permission("dashboard.rea
     ]).to_list(length=1)
     avg_latency = round(latency_rows[0]["average"]) if latency_rows else None
     enabled_languages = await db["platform_languages"].count_documents({"enabled": {"$ne": False}})
+
+    # Calculate voice minutes from all rooms
+    voice_sum_rows = await db["rooms"].aggregate([
+        {"$group": {"_id": None, "total_seconds": {"$sum": "$voice_seconds"}}}
+    ]).to_list(length=1)
+    voice_seconds = voice_sum_rows[0]["total_seconds"] if voice_sum_rows else 0
+    voice_minutes = round(voice_seconds / 60, 2)
+
+    # Calculate connected countries count from participants country field
+    country_rows = await db["rooms"].distinct("participants.country")
+    countries_connected = len([c for c in country_rows if c])
+
     return {
         "metrics": {
             "total_users": total_users,
@@ -69,17 +81,13 @@ async def dashboard(_: Annotated[dict, Depends(require_permission("dashboard.rea
             "meetings_today": meetings_today,
             "active_meetings": active_meetings,
             "messages_translated": translated_messages,
-            "voice_minutes": None,
+            "voice_minutes": voice_minutes,
             "translation_requests": translation_requests,
             "average_latency_ms": avg_latency,
-            "countries_connected": None,
+            "countries_connected": countries_connected,
             "supported_languages": enabled_languages or 10,
         },
-        "metric_notes": {
-            "voice_minutes": "Pending media usage persistence",
-            "average_latency_ms": "Pending analytics backend",
-            "countries_connected": "Pending privacy-safe location analytics",
-        },
+        "metric_notes": {},
         "recent_signups": [serialize(item) for item in recent_signups],
         "recent_meetings": [serialize(item) for item in recent_meetings],
         "recent_errors": [serialize(item) for item in recent_errors],

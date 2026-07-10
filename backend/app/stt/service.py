@@ -26,6 +26,7 @@ class STTResult:
     language: str | None
     provider: str
     latency_ms: int
+    duration_seconds: float = 0.0
 
 
 class STTProvider(Protocol):
@@ -57,9 +58,12 @@ class FasterWhisperProvider:
                 "faster-whisper is not installed. Install backend requirements and ensure model access."
             ) from exc
 
+        from app.runtime_settings import runtime_settings
+        model_name = runtime_settings.translation_settings.get("stt_model", WHISPER_MODEL)
+
         started = perf_counter()
         self._model = WhisperModel(
-            WHISPER_MODEL,
+            model_name,
             device=WHISPER_DEVICE,
             compute_type=WHISPER_COMPUTE_TYPE,
         )
@@ -69,11 +73,11 @@ class FasterWhisperProvider:
                 {
                     "event": "stt.model_loaded",
                     "provider": self.name,
-                    "model": WHISPER_MODEL,
+                    "model": model_name,
                     "device": WHISPER_DEVICE,
                     "compute_type": WHISPER_COMPUTE_TYPE,
-                    "beam_size": WHISPER_BEAM_SIZE,
-                    "vad_min_silence_ms": WHISPER_VAD_MIN_SILENCE_MS,
+                    "beam_size": int(runtime_settings.translation_settings.get("beam_size", WHISPER_BEAM_SIZE)),
+                    "vad_min_silence_ms": int(runtime_settings.translation_settings.get("segment_silence_ms", WHISPER_VAD_MIN_SILENCE_MS)),
                     "latency_ms": self._load_latency_ms,
                 },
                 sort_keys=True,
@@ -98,7 +102,7 @@ class FasterWhisperProvider:
             audio_path = Path(audio_file.name)
 
         try:
-            text, language = await asyncio.to_thread(self._transcribe_file, audio_path)
+            text, language, duration_seconds = await asyncio.to_thread(self._transcribe_file, audio_path)
         finally:
             audio_path.unlink(missing_ok=True)
 
@@ -108,19 +112,25 @@ class FasterWhisperProvider:
             language=language,
             provider=self.name,
             latency_ms=latency_ms,
+            duration_seconds=duration_seconds,
         )
 
-    def _transcribe_file(self, audio_path: Path) -> tuple[str, str | None]:
+    def _transcribe_file(self, audio_path: Path) -> tuple[str, str | None, float]:
         model = self._load_model()
+        from app.runtime_settings import runtime_settings
+        vad_silence = int(runtime_settings.translation_settings.get("segment_silence_ms", WHISPER_VAD_MIN_SILENCE_MS))
+        beam_size = int(runtime_settings.translation_settings.get("beam_size", WHISPER_BEAM_SIZE))
+
         segments, info = model.transcribe(
             str(audio_path),
             vad_filter=True,
-            vad_parameters={"min_silence_duration_ms": WHISPER_VAD_MIN_SILENCE_MS},
-            beam_size=WHISPER_BEAM_SIZE,
+            vad_parameters={"min_silence_duration_ms": vad_silence},
+            beam_size=beam_size,
         )
         text = " ".join(segment.text.strip() for segment in segments).strip()
         language = getattr(info, "language", None)
-        return text, language
+        duration_seconds = getattr(info, "duration", 0.0)
+        return text, language, duration_seconds
 
 
 class STTService:
@@ -129,13 +139,15 @@ class STTService:
         self._warmup_lock = asyncio.Lock()
 
     def status(self) -> dict:
+        from app.runtime_settings import runtime_settings
+        model_name = runtime_settings.translation_settings.get("stt_model", WHISPER_MODEL)
         return {
             "provider": getattr(self.provider, "name", STT_PROVIDER),
-            "model": WHISPER_MODEL,
+            "model": model_name,
             "device": WHISPER_DEVICE,
             "compute_type": WHISPER_COMPUTE_TYPE,
-            "beam_size": WHISPER_BEAM_SIZE,
-            "vad_min_silence_ms": WHISPER_VAD_MIN_SILENCE_MS,
+            "beam_size": int(runtime_settings.translation_settings.get("beam_size", WHISPER_BEAM_SIZE)),
+            "vad_min_silence_ms": int(runtime_settings.translation_settings.get("segment_silence_ms", WHISPER_VAD_MIN_SILENCE_MS)),
             "ready": bool(getattr(self.provider, "ready", False)),
             "load_latency_ms": getattr(self.provider, "load_latency_ms", None),
         }
@@ -169,6 +181,12 @@ class STTService:
                 )
             )
             return payload
+
+    async def update_model(self, new_model_name: str) -> None:
+        if hasattr(self.provider, "_model"):
+            self.provider._model = None
+            logger.info(f"Cleared Whisper STT model cache for reloading to: {new_model_name}")
+            await self.warmup()
 
     async def transcribe(self, audio_bytes: bytes, mime_type: str) -> STTResult:
         try:

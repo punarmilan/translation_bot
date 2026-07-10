@@ -1,0 +1,1 @@
+from app.industry_profiles.service import industry_profiles_service

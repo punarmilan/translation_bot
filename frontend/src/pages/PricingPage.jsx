@@ -1,11 +1,26 @@
-import { Bell, Check, Sparkles } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { getPublicContent } from "../services/api";
+import { Bell, Check, Sparkles } from "lucide-react";
 import { MarketingPage, PageHeader, SectionTitle } from "../components/marketing/MarketingPage";
 
 export default function PricingPage() {
+  const [content, setContent] = useState(null);
+
+  useEffect(() => {
+    getPublicContent()
+      .then((res) => {
+        const item = res.items.find((x) => x.key === "pricing.page");
+        if (item) setContent(item.content);
+      })
+      .catch((err) => console.warn("Failed to load pricing page content", err));
+  }, []);
+
+  const title = content?.title || "Simple plans are coming soon";
+
   return (
     <MarketingPage>
-      <PageHeader eyebrow="Pricing" title="Simple plans are coming soon" description="Translation Bot is currently focused on validating meeting quality, language coverage, and cross-device reliability before introducing paid plans.">
+      <PageHeader eyebrow="Pricing" title={title} description="Translation Bot is currently focused on validating meeting quality, language coverage, and cross-device reliability before introducing paid plans.">
         <Link className="button button--primary button--large" to="/signup">Try the current product</Link>
       </PageHeader>
       <section className="marketing-section">

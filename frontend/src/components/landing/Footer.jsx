@@ -8,13 +8,15 @@ const links = [
   ["Pricing", "/pricing"],
 ];
 
-export default function Footer({ user }) {
+export default function Footer({ user, cms }) {
+  const tagline = cms?.tagline || "Real-time multilingual meetings without language barriers.";
+
   return (
     <footer className="landing-footer">
       <div className="landing-shell landing-footer__grid">
         <div>
           <Link to="/" className="brand-lockup"><span className="brand-mark">TB</span><span>Translation Bot</span></Link>
-          <p>Real-time multilingual meetings without language barriers.</p>
+          <p>{tagline}</p>
         </div>
         <nav aria-label="Footer navigation">
           {links.map(([label, path]) => <Link key={path} to={path}>{label}</Link>)}
