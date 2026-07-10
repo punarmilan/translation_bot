@@ -9,10 +9,28 @@ from app.translation.service import LanguageDetection, TranslationCache, Transla
 from app.websocket_manager import RoomConnectionManager
 
 
+class FakeCollection:
+    async def find_one(self, *args, **kwargs) -> None:
+        return None
+
+    async def insert_one(self, *args, **kwargs) -> None:
+        return None
+
+    async def update_one(self, *args, **kwargs) -> None:
+        return None
+
+
+class FakeDatabase:
+    def __getitem__(self, name: str) -> FakeCollection:
+        return FakeCollection()
+
+
 class FakeWebSocket:
     def __init__(self) -> None:
         self.client_state = WebSocketState.CONNECTED
         self.sent: list[dict] = []
+        self.client = None
+        self.headers: dict[str, str] = {}
 
     async def send_text(self, payload: str) -> None:
         self.sent.append(json.loads(payload))
@@ -32,6 +50,11 @@ def delivered_messages(websocket: FakeWebSocket) -> list[dict]:
 
 
 class TranslationRoutingTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        patcher = patch("app.websocket_manager.get_db", return_value=FakeDatabase())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     async def asyncTearDown(self) -> None:
         if hasattr(self, "manager"):
             sockets = [session.websocket for session in list(self.manager.sessions.values())]
