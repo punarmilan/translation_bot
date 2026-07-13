@@ -277,6 +277,17 @@ async def websocket_room_chat(
                 )
                 continue
 
+            if payload_type == "status_update":
+                if raw_payload.get("room_id") != room_id:
+                    continue
+                await manager.handle_status_update(
+                    websocket,
+                    is_muted=raw_payload.get("is_muted"),
+                    is_camera_off=raw_payload.get("is_camera_off"),
+                    hand_raised=raw_payload.get("hand_raised"),
+                )
+                continue
+
             if payload_type in LANGUAGE_TYPES:
                 try:
                     language_update = IncomingLanguageUpdateMessage.model_validate(raw_payload)
@@ -393,6 +404,21 @@ async def websocket_room_chat(
                     continue
 
                 await manager.relay_signaling(websocket, signal)
+                continue
+
+            if payload_type == "room_control":
+                sender_sid = manager.sessions_by_socket.get(websocket)
+                sender_session = manager.sessions.get(sender_sid) if sender_sid else None
+                if sender_session and sender_session.role in {"host", "admin"}:
+                    cmd_type = raw_payload.get("command_type")
+                    target_uid = raw_payload.get("target_user_id")
+                    admin_cmd = {
+                        "command_type": cmd_type,
+                        "room_id": room_id,
+                        "target_user_id": target_uid,
+                        "payload": raw_payload.get("payload") or {}
+                    }
+                    await manager.apply_admin_command(admin_cmd)
                 continue
 
             try:

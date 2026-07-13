@@ -77,39 +77,6 @@ export default function VideoCall({
           translationStatuses={translationStatuses}
         />
       )}
-
-      {inCall && (
-        <div
-          className="meeting-control-bar fixed bottom-24 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 xl:bottom-6"
-          role="toolbar"
-          aria-label="Meeting controls"
-        >
-          <Button
-            variant={isMuted ? "danger" : "secondary"}
-            onClick={onToggleMute}
-            aria-pressed={isMuted}
-            className={`meeting-control ${isMuted ? "meeting-control--disabled" : ""}`}
-          >
-            <span className="control-icon control-icon--mic" aria-hidden="true" />
-            {isMuted ? "Unmute" : "Mute"}
-          </Button>
-          {isVideoCall && (
-            <Button
-              variant={isCameraOff ? "danger" : "secondary"}
-              onClick={onToggleCamera}
-              aria-pressed={isCameraOff}
-              className={`meeting-control ${isCameraOff ? "meeting-control--disabled" : ""}`}
-            >
-              <span className="control-icon control-icon--camera" aria-hidden="true" />
-              {isCameraOff ? "Camera on" : "Camera off"}
-            </Button>
-          )}
-          <Button variant="danger" onClick={onLeave} className="meeting-control meeting-control--leave">
-            <span className="control-icon control-icon--leave" aria-hidden="true">×</span>
-            Leave call
-          </Button>
-        </div>
-      )}
     </section>
   );
 }

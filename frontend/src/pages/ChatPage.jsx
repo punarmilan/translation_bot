@@ -1,5 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, useSearchParams } from "react-router-dom";
+import {
+  Mic,
+  MicOff,
+  Video,
+  VideoOff,
+  Monitor,
+  Presentation,
+  Hand,
+  Users,
+  MessageSquare,
+  Languages,
+  Activity,
+  LogOut,
+  Settings
+} from "lucide-react";
 import DiagnosticsPanel from "../components/DiagnosticsPanel";
 import TranslationPanel from "../components/TranslationPanel";
 import VideoCall from "../components/VideoCall";
@@ -10,6 +25,7 @@ import {
   synthesizeTts,
   warmupStt,
   getFeatureFlags,
+  getPublicLanguages,
 } from "../services/api";
 
 const API_HOST = window.location.hostname || "localhost";
@@ -18,11 +34,11 @@ const WS_BASE_URL =
   import.meta.env.VITE_WS_BASE_URL || `${WS_PROTOCOL}://${API_HOST}:8000/ws`;
 const DEFAULT_ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 const VOICE_ACTIVITY_SAMPLE_MS = 100;
-const VOICE_SILENCE_MS = 1100;
+const VOICE_SILENCE_MS = 600;
 const VOICE_MIN_UTTERANCE_MS = 500;
-const VOICE_MAX_UTTERANCE_MS = 15000;
+const VOICE_MAX_UTTERANCE_MS = 8000;
 const VOICE_IDLE_RESET_MS = 5000;
-const VOICE_RMS_THRESHOLD = 0.018;
+const VOICE_RMS_THRESHOLD = 0.012;
 
 const LANGUAGE_OPTIONS = [
   { label: "Arabic", value: "ar" },
@@ -109,7 +125,7 @@ async function copyText(value) {
   input.remove();
 }
 
-function JoinForm({ user, onJoin, initialRoomId = "" }) {
+function JoinForm({ user, onJoin, initialRoomId = "", languages = LANGUAGE_OPTIONS }) {
   const [form, setForm] = useState({
     roomId: initialRoomId,
     userLang: user.preferred_language || "en",
@@ -194,7 +210,7 @@ function JoinForm({ user, onJoin, initialRoomId = "" }) {
               }
               className="ui-input text-sm"
             >
-              {LANGUAGE_OPTIONS.map((language) => (
+              {languages.map((language) => (
                 <option key={language.value} value={language.value}>
                   {language.label}
                 </option>
@@ -226,30 +242,135 @@ function JoinForm({ user, onJoin, initialRoomId = "" }) {
   );
 }
 
-function MemberCard({ member, isSelf, connected, translationStatus }) {
+function MemberCard({ member, isSelf, connected, translationStatus, connectionState, currentUserRole, onModerate }) {
+  const showControls = !isSelf && (currentUserRole === "host" || currentUserRole === "admin");
+  const isSpeaking = translationStatus === "Listening..." || member.is_speaking;
+  const isMuted = member.is_muted;
+  const isCameraOff = member.is_camera_off;
+  const handRaised = member.hand_raised;
+  
+  const isReconnecting = connectionState === "connecting";
+  const isDisconnected = !connected && !isSelf;
+
   return (
-    <div className="flex items-center gap-3 rounded-control px-2.5 py-2.5 hover:bg-white/[0.04]">
-      <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-ui-elevated text-xs font-semibold text-ui-muted">
-        {avatarInitials(member.username)}
+    <div className={`flex flex-col gap-1.5 rounded-control px-2.5 py-2.5 transition-all duration-200 hover:bg-white/[0.04] border ${
+      isSpeaking ? "border-brand-accent shadow-[0_0_10px_rgba(91,141,239,0.3)] bg-brand-accent/5" : "border-transparent"
+    }`}>
+      <div className="flex items-center gap-3 w-full">
+        <div className="relative flex-shrink-0">
+          <div className={`flex h-9 w-9 items-center justify-center rounded-full bg-ui-elevated text-xs font-semibold transition ${
+            isSpeaking ? "bg-brand-accent text-white" : "text-ui-muted"
+          }`}>
+            {avatarInitials(member.username)}
+          </div>
+          {isSpeaking && (
+            <span className="absolute -top-0.5 -right-0.5 flex h-3 w-3">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand-accent opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-brand-accent"></span>
+            </span>
+          )}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <p className="text-sm font-medium text-brand-bg truncate">
+              {member.name || member.username}
+              {isSelf && <span className="text-brand-bg/40 text-xs ml-1">(you)</span>}
+            </p>
+            <div className="flex gap-1 items-center">
+              {member.role === "host" && (
+                <span className="bg-brand-accent/25 text-brand-accent text-[9px] font-bold px-1.5 py-0.5 rounded">HOST</span>
+              )}
+              {member.role === "co-host" && (
+                <span className="bg-brand-accent/15 text-brand-accent/80 text-[9px] font-bold px-1.5 py-0.5 rounded">CO-HOST</span>
+              )}
+              {handRaised && (
+                <span className="text-amber-400 text-xs animate-bounce" title="Hand Raised">✋</span>
+              )}
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-2 text-xs text-ui-subtle mt-0.5">
+            <span className="capitalize">{member.role}</span>
+            <span>•</span>
+            <span className="uppercase">{member.preferred_language}</span>
+            {isReconnecting && <span className="text-amber-300 text-[10px] animate-pulse">Reconnecting...</span>}
+            {isDisconnected && <span className="text-red-300 text-[10px]">Disconnected</span>}
+          </div>
+
+          {translationStatus && (
+            <p className="mt-1 text-[11px] font-medium text-brand-accent flex items-center gap-1" aria-live="polite">
+              {translationStatus.includes("Listening") && (
+                <span className="flex items-end gap-0.5 h-2.5 w-3 mb-0.5">
+                  <span className="bg-brand-accent w-[2.5px] h-1.5 rounded animate-eq1" />
+                  <span className="bg-brand-accent w-[2.5px] h-3 rounded animate-eq2" />
+                  <span className="bg-brand-accent w-[2.5px] h-2 rounded animate-eq3" />
+                </span>
+              )}
+              {translationStatus}
+            </p>
+          )}
+        </div>
+
+        <div className="flex gap-1.5 text-xs">
+          {isMuted ? (
+            <span className="text-ui-danger bg-ui-danger/10 p-1 rounded" title="Microphone muted">
+              <MicOff size={13} />
+            </span>
+          ) : (
+            <span className="text-ui-success bg-ui-success/10 p-1 rounded" title="Microphone unmuted">
+              <Mic size={13} />
+            </span>
+          )}
+          {isCameraOff ? (
+            <span className="text-ui-subtle bg-white/[0.04] p-1 rounded" title="Camera off">
+              <VideoOff size={13} />
+            </span>
+          ) : (
+            <span className="text-ui-success bg-ui-success/10 p-1 rounded" title="Camera on">
+              <Video size={13} />
+            </span>
+          )}
+        </div>
       </div>
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-brand-bg truncate">
-          {member.name || member.username}
-          {isSelf && <span className="text-brand-bg/40 text-xs ml-1">(you)</span>}
-        </p>
-        <p className="text-xs capitalize text-ui-subtle">
-          {member.role} - {member.preferred_language}
-        </p>
-        {translationStatus && (
-          <p className="mt-1 text-[11px] font-medium text-brand-accent" aria-live="polite">
-            {translationStatus}
-          </p>
-        )}
-      </div>
-      {connected && (
-        <span className="rounded-full bg-ui-success/10 px-2 py-1 text-[10px] text-ui-success">
-          Live
-        </span>
+      {showControls && (
+        <div className="flex flex-wrap gap-1 mt-1 pl-12">
+          <button
+            type="button"
+            onClick={() => onModerate(member, "MUTE_PARTICIPANT")}
+            className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-brand-bg/80 hover:bg-white/[0.12]"
+          >
+            Mute
+          </button>
+          <button
+            type="button"
+            onClick={() => onModerate(member, "UNMUTE_PARTICIPANT")}
+            className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-brand-bg/80 hover:bg-white/[0.12]"
+          >
+            Unmute
+          </button>
+          <button
+            type="button"
+            onClick={() => onModerate(member, "PROMOTE_USER")}
+            className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-brand-bg/80 hover:bg-white/[0.12]"
+          >
+            Promote
+          </button>
+          <button
+            type="button"
+            onClick={() => onModerate(member, "TRANSFER_HOST")}
+            className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] text-brand-bg/80 hover:bg-white/[0.12]"
+          >
+            Transfer Host
+          </button>
+          <button
+            type="button"
+            onClick={() => onModerate(member, "KICK_PARTICIPANT")}
+            className="rounded bg-ui-danger/10 px-1.5 py-0.5 text-[10px] text-ui-danger hover:bg-ui-danger/20"
+          >
+            Kick
+          </button>
+        </div>
       )}
     </div>
   );
@@ -334,7 +455,7 @@ function CallPanel({
   );
 }
 
-function MessageBubble({ message, isMine, showTranslationDebug }) {
+function MessageBubble({ message, isMine, showTranslationDebug, isConsecutive }) {
   if (message.type === "system") {
     return (
       <div className="flex justify-center py-1">
@@ -345,42 +466,67 @@ function MessageBubble({ message, isMine, showTranslationDebug }) {
     );
   }
 
+  const isTranslated = message.original !== message.translated;
+
   return (
-    <div className={`flex gap-2 ${isMine ? "justify-end" : "justify-start"}`}>
-      <div
-        className={`max-w-[82%] rounded-panel px-4 py-3 ${
-          isMine
-            ? "bg-brand-accent text-white"
-            : "bg-brand-mid text-brand-bg"
-        }`}
-      >
-        <div className="flex items-center gap-2 mb-1.5">
-          <span className={`text-xs font-semibold ${isMine ? "text-white/80" : "text-ui-muted"}`}>
-            {message.sender}
-          </span>
-          {message.delivery_mode === "direct" && (
-            <span className="bg-white/10 text-brand-bg/60 text-[10px] px-1.5 py-0.5 rounded-md">
-              Private{message.target_name ? ` to ${message.target_name}` : ""}
-            </span>
-          )}
-          <span className={`ml-auto text-[10px] ${isMine ? "text-white/55" : "text-ui-subtle"}`}>
-            {formatTime(message.timestamp)}
-          </span>
+    <div className={`flex items-start gap-2 ${isConsecutive ? "mt-0.5" : "mt-3"} ${isMine ? "flex-row-reverse" : "flex-row"}`}>
+      {!isConsecutive ? (
+        <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-ui-elevated text-[10px] font-bold text-ui-muted shadow-sm select-none">
+          {avatarInitials(message.sender)}
         </div>
-        <p className="text-sm leading-relaxed">{message.translated}</p>
-        {message.original !== message.translated && (
-          <p className={`mt-2 border-t pt-2 text-xs leading-relaxed ${
-            isMine ? "border-white/15 text-white/60" : "border-white/[0.06] text-ui-muted"
-          }`}>
-            {message.original}
-          </p>
-        )}
-        {showTranslationDebug && (
-          <div className="mt-2 pt-2 border-t border-white/10 text-[10px] leading-relaxed text-brand-bg/45">
-            {message.detected_language || "unknown"} to {message.target_language || "unknown"} -{" "}
-            {message.translation_status || "unknown"} - {message.cache_hit ? "cache hit" : "cache miss"}
+      ) : (
+        <div className="w-7 flex-shrink-0" />
+      )}
+
+      <div className={`max-w-[75%] flex flex-col ${isMine ? "items-end" : "items-start"}`}>
+        {!isConsecutive && (
+          <div className="flex items-center gap-1.5 mb-1 px-1">
+            <span className="text-xs font-semibold text-brand-bg/85">
+              {message.sender}
+            </span>
+            {message.detected_language && (
+              <span className="text-[9px] font-mono bg-white/[0.06] text-ui-muted px-1.5 py-0.2 rounded font-bold uppercase">
+                {message.detected_language}
+              </span>
+            )}
+            {isTranslated && (
+              <span className="text-[9px] bg-brand-accent/20 text-brand-accent px-1.5 py-0.2 rounded flex items-center gap-0.5" title="Translated message">
+                🌐 Translated
+              </span>
+            )}
+            {message.delivery_mode === "direct" && (
+              <span className="bg-amber-500/20 text-amber-300 text-[9px] px-1.5 py-0.2 rounded font-semibold">
+                Private{message.target_name ? ` to ${message.target_name}` : ""}
+              </span>
+            )}
+            <span className="text-[9.5px] text-ui-subtle">
+              {formatTime(message.timestamp)}
+            </span>
           </div>
         )}
+
+        <div
+          className={`rounded-2xl px-3.5 py-2 text-sm leading-relaxed ${
+            isMine
+              ? "bg-brand-accent text-white rounded-tr-none"
+              : "bg-brand-mid text-brand-bg rounded-tl-none"
+          } ${isConsecutive ? (isMine ? "rounded-tr-2xl" : "rounded-tl-2xl") : ""}`}
+        >
+          <p>{message.translated}</p>
+          {isTranslated && (
+            <p className={`mt-1.5 border-t pt-1.5 text-xs leading-relaxed ${
+              isMine ? "border-white/15 text-white/55" : "border-white/[0.06] text-ui-muted"
+            }`}>
+              <span className="text-[10px] opacity-40 uppercase block mb-0.5">Original</span>
+              {message.original}
+            </p>
+          )}
+          {showTranslationDebug && (
+            <div className="mt-2 pt-2 border-t border-white/10 text-[9px] leading-relaxed text-brand-bg/40 font-mono">
+              STT: {message.detected_language || "unknown"} to {message.target_language || "unknown"} | {message.translation_status || "unknown"} | {message.cache_hit ? "hit" : "miss"}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -390,6 +536,7 @@ export default function ChatPage() {
   const { user, logout, loading } = useAuth();
   const [searchParams] = useSearchParams();
 
+  const [languages, setLanguages] = useState(LANGUAGE_OPTIONS);
   const [session, setSession] = useState(null);
   const [messages, setMessages] = useState([]);
   const [members, setMembers] = useState([]);
@@ -419,12 +566,36 @@ export default function ChatPage() {
   const [listenerMode, setListenerMode] = useState("original_translated_audio");
   const [connectedPeerIds, setConnectedPeerIds] = useState([]);
   const [localMediaStream, setLocalMediaStream] = useState(null);
+
+  const [leftPanelWidth, setLeftPanelWidth] = useState(() => {
+    const val = localStorage.getItem("meeting_left_panel_width");
+    return val ? parseInt(val, 10) : 256;
+  });
+  const [rightPanelWidth, setRightPanelWidth] = useState(() => {
+    const val = localStorage.getItem("meeting_right_panel_width");
+    return val ? parseInt(val, 10) : 380;
+  });
+  const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
+  const [unreadMessagesCount, setUnreadMessagesCount] = useState(0);
+  const [isHandRaised, setIsHandRaised] = useState(false);
   const [remoteStreams, setRemoteStreams] = useState({});
   const [diagnostics, setDiagnostics] = useState({
     websocketStatus: "idle",
     reconnectAttempts: 0,
     lastEvent: "",
   });
+
+  useEffect(() => {
+    getPublicLanguages()
+      .then((data) => {
+        if (data?.items) {
+          setLanguages(data.items.map((item) => ({ label: item.name, value: item.code })));
+        }
+      })
+      .catch((err) => console.warn("Failed to fetch dynamic languages", err));
+  }, []);
+
   const [peerDiagnostics, setPeerDiagnostics] = useState({});
   const [showTranslationDebug, setShowTranslationDebug] = useState(() => {
     return localStorage.getItem("translation_debug") === "true";
@@ -469,6 +640,7 @@ export default function ChatPage() {
   const isMutedRef = useRef(false);
   const isCameraOffRef = useRef(false);
   const isVideoCallRef = useRef(false);
+  const isHandRaisedRef = useRef(false);
 
   const directTargets = useMemo(() => {
     return members.filter((member) => {
@@ -897,8 +1069,50 @@ export default function ChatPage() {
     setIsVideoCall(false);
     setConnectedPeerIds([]);
     setRemoteStreams({});
-    setPeerDiagnostics({});
-    noteDiagnostic("call cleaned up");
+  };
+
+  const recoverPeerConnection = async (peerId) => {
+    const connection = peerConnectionsRef.current.get(peerId);
+    if (!connection) return;
+
+    if (connection.__isRestarting) return;
+    connection.__isRestarting = true;
+
+    connection.__restartCount = (connection.__restartCount || 0) + 1;
+    console.warn(`Recovering peer connection for ${peerId}, attempt: ${connection.__restartCount}`);
+    updatePeerDiagnostic(peerId, { connectionState: "connecting" });
+
+    const isCaller = sessionIdRef.current < peerId;
+    if (isCaller) {
+      try {
+        const offer = await connection.createOffer({ iceRestart: true });
+        await connection.setLocalDescription(offer);
+        sendSignal("webrtc_offer", peerId, {
+          description: connection.localDescription,
+          media_type: isVideoCallRef.current ? "video" : "audio",
+          isRestart: true
+        });
+      } catch (err) {
+        console.error("ICE restart offer failed, recreating connection...", err);
+        connection.__isRestarting = false;
+        await recreatePeerConnection(peerId);
+      }
+    } else {
+      setTimeout(async () => {
+        const currentConn = peerConnectionsRef.current.get(peerId);
+        if (currentConn && (currentConn.connectionState === "failed" || currentConn.iceConnectionState === "failed")) {
+          await recreatePeerConnection(peerId);
+        }
+      }, 5000);
+    }
+  };
+
+  const recreatePeerConnection = async (peerId) => {
+    console.warn(`Tearing down and recreating connection for: ${peerId}`);
+    removePeerConnection(peerId);
+    if (sessionIdRef.current < peerId) {
+      await createOfferForPeer(peerId);
+    }
   };
 
   const createPeerConnection = async (peerId) => {
@@ -961,6 +1175,9 @@ export default function ChatPage() {
       console.info("ICE connection state", { peerId, state });
       updatePeerDiagnostic(peerId, { iceConnectionState: state });
       noteDiagnostic(`ICE ${state}`);
+      if (state === "failed") {
+        void recoverPeerConnection(peerId);
+      }
     };
 
     connection.onicegatheringstatechange = () => {
@@ -991,11 +1208,17 @@ export default function ChatPage() {
       const state = connection.connectionState;
       if (state === "connected") {
         console.info("Peer connected", { peerId });
+        connection.__isRestarting = false;
+        connection.__restartCount = 0;
         updatePeerDiagnostic(peerId, { connectionState: state });
         noteDiagnostic("peer connected");
         updateConnectedPeer(peerId, true);
       }
-      if (state === "failed" || state === "disconnected" || state === "closed") {
+      if (state === "failed") {
+        console.warn("Peer connection failed, initiating recovery", { peerId });
+        void recoverPeerConnection(peerId);
+      }
+      if (state === "disconnected" || state === "closed") {
         console.info("Peer disconnected", { peerId, state });
         updatePeerDiagnostic(peerId, { connectionState: state });
         noteDiagnostic(`peer ${state}`);
@@ -1143,6 +1366,11 @@ export default function ChatPage() {
       track.enabled = !muted;
     });
     setIsMuted(muted);
+    sendSocketMessage({
+      type: "status_update",
+      room_id: session.roomId,
+      is_muted: muted,
+    });
   };
 
   const toggleCamera = () => {
@@ -1152,6 +1380,72 @@ export default function ChatPage() {
       track.enabled = !cameraOff;
     });
     setIsCameraOff(cameraOff);
+    sendSocketMessage({
+      type: "status_update",
+      room_id: session.roomId,
+      is_camera_off: cameraOff,
+    });
+  };
+
+  const toggleHandRaised = () => {
+    const nextHand = !isHandRaisedRef.current;
+    isHandRaisedRef.current = nextHand;
+    setIsHandRaised(nextHand);
+    sendSocketMessage({
+      type: "status_update",
+      room_id: session.roomId,
+      hand_raised: nextHand,
+    });
+  };
+
+  const startResizingLeft = (mouseDownEvent) => {
+    mouseDownEvent.preventDefault();
+    const startWidth = leftPanelWidth;
+    const startX = mouseDownEvent.clientX;
+
+    const doDrag = (mouseMoveEvent) => {
+      const newWidth = Math.max(200, Math.min(450, startWidth + (mouseMoveEvent.clientX - startX)));
+      setLeftPanelWidth(newWidth);
+      localStorage.setItem("meeting_left_panel_width", newWidth);
+    };
+
+    const stopDrag = () => {
+      document.removeEventListener("mousemove", doDrag);
+      document.removeEventListener("mouseup", stopDrag);
+    };
+
+    document.addEventListener("mousemove", doDrag);
+    document.addEventListener("mouseup", stopDrag);
+  };
+
+  const startResizingRight = (mouseDownEvent) => {
+    mouseDownEvent.preventDefault();
+    const startWidth = rightPanelWidth;
+    const startX = mouseDownEvent.clientX;
+
+    const doDrag = (mouseMoveEvent) => {
+      const newWidth = Math.max(280, Math.min(600, startWidth - (mouseMoveEvent.clientX - startX)));
+      setRightPanelWidth(newWidth);
+      localStorage.setItem("meeting_right_panel_width", newWidth);
+    };
+
+    const stopDrag = () => {
+      document.removeEventListener("mousemove", doDrag);
+      document.removeEventListener("mouseup", stopDrag);
+    };
+
+    document.addEventListener("mousemove", doDrag);
+    document.addEventListener("mouseup", stopDrag);
+  };
+
+  const resetLeftWidth = () => {
+    setLeftPanelWidth(256);
+    localStorage.setItem("meeting_left_panel_width", 256);
+  };
+
+  const resetRightWidth = () => {
+    setRightPanelWidth(380);
+    localStorage.setItem("meeting_right_panel_width", 380);
   };
 
   const playTranslatedAudio = async (transcript) => {
@@ -1351,6 +1645,15 @@ export default function ChatPage() {
             listener_mode: listenerModeRef.current,
           })
         );
+        socket.send(
+          JSON.stringify({
+            type: "status_update",
+            room_id: session.roomId,
+            is_muted: isMutedRef.current,
+            is_camera_off: isCameraOffRef.current,
+            hand_raised: isHandRaisedRef.current,
+          })
+        );
       };
 
       socket.onerror = () => {
@@ -1484,6 +1787,9 @@ export default function ChatPage() {
           return;
         }
         setMessages((current) => [...current, { ...payload, id: createClientId() }]);
+        if (meetingPanel !== "chat" || rightPanelCollapsed) {
+          setUnreadMessagesCount((prev) => prev + 1);
+        }
       };
     };
 
@@ -1498,10 +1804,24 @@ export default function ChatPage() {
       }
       socketRef.current = null;
     };
-  }, [session]);
+  }, [session, meetingPanel, rightPanelCollapsed]);
 
   useEffect(() => {
-    listEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (meetingPanel === "chat" && !rightPanelCollapsed) {
+      setUnreadMessagesCount(0);
+    }
+  }, [meetingPanel, rightPanelCollapsed]);
+
+  useEffect(() => {
+    const container = listEndRef.current?.parentElement;
+    if (container) {
+      const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 120;
+      const lastMessage = messages[messages.length - 1];
+      const isMine = lastMessage?.sender === session?.username;
+      if (isNearBottom || isMine) {
+        listEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      }
+    }
   }, [messages]);
 
   useEffect(() => {
@@ -1669,14 +1989,33 @@ export default function ChatPage() {
         user={user}
         onJoin={joinRoom}
         initialRoomId={searchParams.get("room") || ""}
+        languages={languages}
       />
     );
   }
 
+  const handleRoomControl = (targetMember, command_type) => {
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      sendSocketMessage({
+        type: "room_control",
+        room_id: session.roomId,
+        command_type,
+        target_user_id: targetMember.user_id,
+        payload: command_type === "PROMOTE_USER" ? { role: "host" } : {}
+      });
+    }
+  };
+
   return (
     <div className="flex min-h-screen flex-col bg-brand-dark xl:h-screen xl:flex-row xl:overflow-hidden">
-      <aside className="flex max-h-[42vh] w-full flex-shrink-0 flex-col border-b border-white/[0.06] bg-ui-secondary xl:max-h-none xl:w-64 xl:border-b-0 xl:border-r">
-        <div className="px-5 py-5">
+      {/* Left panel: Participants */}
+      <aside
+        className={`flex max-h-[42vh] w-full flex-shrink-0 flex-col border-b border-white/[0.06] bg-ui-secondary xl:max-h-none xl:border-b-0 xl:border-r transition-all duration-200 ${
+          leftPanelCollapsed ? "xl:w-0 xl:overflow-hidden xl:border-r-0" : "xl:w-64"
+        }`}
+        style={{ width: !leftPanelCollapsed && window.innerWidth >= 1280 ? `${leftPanelWidth}px` : undefined }}
+      >
+        <div className="px-5 py-5 flex-shrink-0">
           <span className="text-base font-semibold text-brand-bg">Translation Bot</span>
           <p className="mt-1 truncate text-xs text-ui-subtle">Workspace / {session.roomId}</p>
         </div>
@@ -1694,6 +2033,9 @@ export default function ChatPage() {
                 isSelf={member.session_id === sessionId}
                 connected={connectedPeerIds.includes(member.session_id)}
                 translationStatus={participantTranslationStatus[member.session_id]}
+                connectionState={peerDiagnostics[member.session_id]?.connectionState}
+                currentUserRole={userRole}
+                onModerate={handleRoomControl}
               />
             ))}
           </div>
@@ -1730,7 +2072,7 @@ export default function ChatPage() {
           )}
         </div>
 
-        <div className="flex items-center gap-3 border-t border-white/[0.06] px-4 py-3">
+        <div className="flex items-center gap-3 border-t border-white/[0.06] px-4 py-3 flex-shrink-0">
           <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-ui-elevated text-xs font-semibold text-ui-muted">
             {avatarInitials(user.username)}
           </div>
@@ -1769,8 +2111,19 @@ export default function ChatPage() {
         </div>
       </aside>
 
+      {/* Resize Handle Left */}
+      {!leftPanelCollapsed && (
+        <div
+          onMouseDown={startResizingLeft}
+          onDoubleClick={resetLeftWidth}
+          className="hidden xl:block w-1 cursor-col-resize hover:bg-brand-accent/50 active:bg-brand-accent bg-white/[0.04] self-stretch flex-shrink-0 z-30 transition-colors"
+          title="Double click to reset width"
+        />
+      )}
+
+      {/* Main Content Area */}
       <main className="flex min-h-[70vh] min-w-0 flex-1 flex-col bg-brand-dark xl:min-h-0">
-        <header className="flex flex-col gap-4 border-b border-white/[0.06] px-5 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
+        <header className="flex flex-col gap-4 border-b border-white/[0.06] px-5 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between flex-shrink-0">
           <div>
             <h1 className="text-[28px] font-semibold leading-tight text-brand-bg">{session.roomId}</h1>
             <p className="mt-1 text-xs text-ui-subtle">
@@ -1779,16 +2132,6 @@ export default function ChatPage() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => openMeetingPanel("chat")}
-              className="meeting-chat-trigger"
-              aria-label="Open translated meeting chat"
-            >
-              <span className="meeting-chat-trigger__icon" aria-hidden="true" />
-              Chat
-              {messages.length > 0 && <span className="meeting-chat-trigger__count">{messages.length}</span>}
-            </button>
             <button
               type="button"
               onClick={copyMeetingLink}
@@ -1805,7 +2148,7 @@ export default function ChatPage() {
                 disabled={!isConnected}
                 className="rounded-control border border-white/[0.06] bg-ui-secondary px-2.5 py-2 text-xs text-brand-bg outline-none focus:border-brand-accent disabled:opacity-50"
               >
-                {LANGUAGE_OPTIONS.map((language) => (
+                {languages.map((language) => (
                   <option key={language.value} value={language.value}>
                     {language.label}
                   </option>
@@ -1830,57 +2173,217 @@ export default function ChatPage() {
             >
               {isConnected ? "Connected" : "Disconnected"}
             </span>
-            <button
-              type="button"
-              onClick={leaveRoom}
-              className="rounded-control px-3 py-2 text-xs font-medium text-ui-muted hover:bg-white/[0.04] hover:text-brand-bg"
-            >
-              Leave room
-            </button>
           </div>
         </header>
 
-        <VideoCall
-          callActive={callActive}
-          inCall={inCall}
-          isVideoCall={isVideoCall}
-          isMuted={isMuted}
-          isCameraOff={isCameraOff}
-          callError={callError}
-          connectedPeers={connectedPeers}
-          localStream={localMediaStream}
-          remoteStreams={remoteStreams}
-          members={members}
-          localLabel={user.name || user.username}
-          canStartCall={featureFlags.video_calling && (userRole === "host" || userRole === "admin")}
-          onStartVideo={startVideoCall}
-          onJoinVideo={joinVideoCall}
-          onLeave={leaveAudioCall}
-          onToggleMute={toggleMute}
-          onToggleCamera={toggleCamera}
-          muteRemoteAudio={originalAudioMuted}
-          translationStatuses={participantTranslationStatus}
-          videoCallingEnabled={featureFlags.video_calling}
-        />
+        <div className="flex-1 overflow-y-auto flex flex-col justify-between">
+          <div className="flex-1">
+            <VideoCall
+              callActive={callActive}
+              inCall={inCall}
+              isVideoCall={isVideoCall}
+              isMuted={isMuted}
+              isCameraOff={isCameraOff}
+              callError={callError}
+              connectedPeers={connectedPeers}
+              localStream={localMediaStream}
+              remoteStreams={remoteStreams}
+              members={members}
+              localLabel={user.name || user.username}
+              canStartCall={featureFlags.video_calling && (userRole === "host" || userRole === "admin")}
+              onStartVideo={startVideoCall}
+              onJoinVideo={joinVideoCall}
+              onLeave={leaveAudioCall}
+              onToggleMute={toggleMute}
+              onToggleCamera={toggleCamera}
+              muteRemoteAudio={originalAudioMuted}
+              translationStatuses={participantTranslationStatus}
+              videoCallingEnabled={featureFlags.video_calling}
+            />
 
-        <div className="meeting-scroll flex-1 space-y-3 overflow-y-auto px-4 py-5 sm:px-6">
-          {connectionError && (
-            <div className="rounded-lg border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-              {connectionError}
+            <div className="meeting-scroll space-y-3 px-4 py-5 sm:px-6">
+              {connectionError && (
+                <div className="rounded-lg border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                  {connectionError}
+                </div>
+              )}
+              {!connectionError && !isVideoCall && (
+                <div className="flex h-full min-h-32 flex-col items-center justify-center text-center">
+                  <p className="text-sm font-medium text-ui-muted">Ready for your meeting</p>
+                  <p className="mt-1 text-xs text-ui-subtle">Start video or open Chat to message participants.</p>
+                </div>
+              )}
             </div>
-          )}
-          {!connectionError && !isVideoCall && (
-            <div className="flex h-full min-h-32 flex-col items-center justify-center text-center">
-              <p className="text-sm font-medium text-ui-muted">Ready for your meeting</p>
-              <p className="mt-1 text-xs text-ui-subtle">Start video or open Chat to message participants.</p>
-            </div>
-          )}
+          </div>
+        </div>
+
+        {/* Bottom Meeting Toolbar */}
+        <div className="bg-ui-secondary border-t border-white/[0.06] px-6 py-3 flex items-center justify-between z-40 flex-shrink-0">
+          <div className="hidden md:flex items-center gap-2">
+            <span className={`h-2.5 w-2.5 rounded-full ${isConnected ? "bg-emerald-500 animate-pulse" : "bg-red-500"}`} />
+            <span className="text-xs text-ui-muted">
+              {isConnected ? "Connected" : "Offline"} | peers: {connectedPeers.length}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2.5 mx-auto md:mx-0">
+            <button
+              onClick={toggleMute}
+              className={`p-3 rounded-full transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-brand-accent ${
+                isMuted
+                  ? "bg-ui-danger text-white hover:bg-ui-danger/90"
+                  : "bg-white/[0.06] text-brand-bg/85 hover:bg-white/[0.12]"
+              }`}
+              title={isMuted ? "Unmute Microphone" : "Mute Microphone"}
+            >
+              {isMuted ? <MicOff size={20} /> : <Mic size={20} />}
+            </button>
+
+            <button
+              onClick={toggleCamera}
+              className={`p-3 rounded-full transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-brand-accent ${
+                isCameraOff
+                  ? "bg-ui-danger text-white hover:bg-ui-danger/90"
+                  : "bg-white/[0.06] text-brand-bg/85 hover:bg-white/[0.12]"
+              }`}
+              title={isCameraOff ? "Turn Video On" : "Turn Video Off"}
+            >
+              {isCameraOff ? <VideoOff size={20} /> : <Video size={20} />}
+            </button>
+
+            <button
+              disabled
+              className="p-3 rounded-full bg-white/[0.02] text-brand-bg/25 cursor-not-allowed"
+              title="Screen sharing (Coming Soon)"
+            >
+              <Monitor size={20} />
+            </button>
+
+            <button
+              disabled
+              className="p-3 rounded-full bg-white/[0.02] text-brand-bg/25 cursor-not-allowed"
+              title="Whiteboard (Coming Soon)"
+            >
+              <Presentation size={20} />
+            </button>
+
+            <button
+              onClick={toggleHandRaised}
+              className={`p-3 rounded-full transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-brand-accent ${
+                isHandRaised
+                  ? "bg-amber-500 text-white hover:bg-amber-600"
+                  : "bg-white/[0.06] text-brand-bg/85 hover:bg-white/[0.12]"
+              }`}
+              title={isHandRaised ? "Lower Hand" : "Raise Hand"}
+            >
+              <Hand size={20} />
+            </button>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setLeftPanelCollapsed((prev) => !prev)}
+              className={`p-2.5 rounded-lg transition-all focus:outline-none ${
+                !leftPanelCollapsed
+                  ? "bg-brand-accent/20 text-brand-accent"
+                  : "text-ui-muted hover:bg-white/[0.04]"
+              }`}
+              title="Toggle Participants Panel"
+            >
+              <Users size={18} />
+            </button>
+
+            <button
+              onClick={() => {
+                if (meetingPanel === "chat" && !rightPanelCollapsed) {
+                  setRightPanelCollapsed(true);
+                } else {
+                  setMeetingPanel("chat");
+                  setRightPanelCollapsed(false);
+                }
+              }}
+              className={`relative p-2.5 rounded-lg transition-all focus:outline-none ${
+                !rightPanelCollapsed && meetingPanel === "chat"
+                  ? "bg-brand-accent/20 text-brand-accent"
+                  : "text-ui-muted hover:bg-white/[0.04]"
+              }`}
+              title="Toggle Chat Panel"
+            >
+              <MessageSquare size={18} />
+              {unreadMessagesCount > 0 && (
+                <span className="absolute -top-1 -right-1 bg-ui-danger text-white text-[9px] font-bold h-4 w-4 rounded-full flex items-center justify-center animate-pulse">
+                  {unreadMessagesCount}
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => {
+                if (meetingPanel === "translation" && !rightPanelCollapsed) {
+                  setRightPanelCollapsed(true);
+                } else {
+                  setMeetingPanel("translation");
+                  setRightPanelCollapsed(false);
+                }
+              }}
+              className={`p-2.5 rounded-lg transition-all focus:outline-none ${
+                !rightPanelCollapsed && meetingPanel === "translation"
+                  ? "bg-brand-accent/20 text-brand-accent"
+                  : "text-ui-muted hover:bg-white/[0.04]"
+              }`}
+              title="Toggle Translation Panel"
+            >
+              <Languages size={18} />
+            </button>
+
+            <button
+              onClick={() => {
+                if (meetingPanel === "diagnostics" && !rightPanelCollapsed) {
+                  setRightPanelCollapsed(true);
+                } else {
+                  setMeetingPanel("diagnostics");
+                  setRightPanelCollapsed(false);
+                }
+              }}
+              className={`p-2.5 rounded-lg transition-all focus:outline-none ${
+                !rightPanelCollapsed && meetingPanel === "diagnostics"
+                  ? "bg-brand-accent/20 text-brand-accent"
+                  : "text-ui-muted hover:bg-white/[0.04]"
+              }`}
+              title="Toggle Diagnostics Panel"
+            >
+              <Activity size={18} />
+            </button>
+
+            <button
+              onClick={leaveAudioCall}
+              className="ml-2 px-4 py-2 bg-ui-danger hover:bg-ui-danger/90 text-white text-xs font-semibold rounded-lg transition flex items-center gap-1.5 focus:outline-none"
+              title="Leave Room Call"
+            >
+              <LogOut size={14} />
+              <span className="hidden sm:inline">Leave</span>
+            </button>
+          </div>
         </div>
       </main>
 
+      {/* Resize Handle Right */}
+      {!rightPanelCollapsed && (
+        <div
+          onMouseDown={startResizingRight}
+          onDoubleClick={resetRightWidth}
+          className="hidden xl:block w-1 cursor-col-resize hover:bg-brand-accent/50 active:bg-brand-accent bg-white/[0.04] self-stretch flex-shrink-0 z-30 transition-colors"
+          title="Double click to reset width"
+        />
+      )}
+
+      {/* Right panel: Chat / Translation / Diagnostics */}
       <aside
         id="meeting-side-panel"
-        className="meeting-side-panel w-full flex-shrink-0 border-t border-white/[0.06] bg-ui-secondary xl:w-[380px] xl:border-l xl:border-t-0"
+        className={`meeting-side-panel w-full flex-shrink-0 border-t border-white/[0.06] bg-ui-secondary xl:border-l xl:border-t-0 flex flex-col transition-all duration-200 ${
+          rightPanelCollapsed ? "xl:w-0 xl:overflow-hidden xl:border-l-0" : "xl:w-[380px]"
+        }`}
+        style={{ width: !rightPanelCollapsed && window.innerWidth >= 1280 ? `${rightPanelWidth}px` : undefined }}
       >
         <div className="meeting-panel-tabs" role="tablist" aria-label="Meeting tools">
           {[
@@ -1925,14 +2428,24 @@ export default function ChatPage() {
                   <p>Send to everyone or choose a participant for a private translated message.</p>
                 </div>
               ) : (
-                messages.map((message) => (
-                  <MessageBubble
-                    key={message.id}
-                    message={message}
-                    isMine={message.sender === session.username}
-                    showTranslationDebug={showTranslationDebug}
-                  />
-                ))
+                messages.map((message, idx) => {
+                  const prev = messages[idx - 1];
+                  const isConsecutive =
+                    prev &&
+                    prev.sender === message.sender &&
+                    prev.type !== "system" &&
+                    message.type !== "system" &&
+                    new Date(message.timestamp).getTime() - new Date(prev.timestamp).getTime() < 60000;
+                  return (
+                    <MessageBubble
+                      key={message.id}
+                      message={message}
+                      isMine={message.sender === session.username}
+                      showTranslationDebug={showTranslationDebug}
+                      isConsecutive={isConsecutive}
+                    />
+                  );
+                })
               )}
               <div ref={listEndRef} />
             </div>
@@ -2000,6 +2513,7 @@ export default function ChatPage() {
               localStream={localMediaStream}
               remoteStreams={remoteStreams}
               peerDiagnostics={peerDiagnostics}
+              transcripts={transcripts}
             />
 
           </div>

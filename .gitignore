@@ -35,3 +35,11 @@ certs/
 backend/models/
 backend/piper/
 backend/piper_windows_amd64.zip
+
+
+#testing inputs
+start_project.bat
+
+backend/output.wav
+backend/test_persist.wav
+backend/test_stderr.wav

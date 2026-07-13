@@ -1,8 +1,8 @@
-import { Bell, Download, FileClock, Lock, LogOut, MessageSquareOff, MicOff, RefreshCw, Search, Unlock, UserRoundX, X } from "lucide-react";
+import { Bell, Download, FileClock, Lock, LogOut, MessageSquareOff, MicOff, RefreshCw, Search, Unlock, Users, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import AdminPageHeader from "../components/AdminPageHeader";
 import StatusBadge from "../components/StatusBadge";
-import { exportMeeting as requestMeetingExport, getMeetingLogs, getMeetings, issueMeetingCommand, meetingAction } from "../services/api";
+import { exportMeeting as requestMeetingExport, getMeetingLogs, getMeetings, issueMeetingCommand, meetingAction, getMeetingParticipants } from "../services/api";
 
 function formatDuration(seconds) {
   if (seconds == null) return "-";
@@ -14,11 +14,11 @@ export default function MeetingsPage() {
   const [data, setData] = useState({ items: [], total: 0 });
   const [filters, setFilters] = useState({ search: "", status: "", page: 1, page_size: 20 });
   const [message, setMessage] = useState("");
-  const [kickRoom, setKickRoom] = useState(null);
+  const [manageRoom, setManageRoom] = useState(null);
+  const [participants, setParticipants] = useState([]);
   const [broadcastRoom, setBroadcastRoom] = useState(null);
   const [broadcastMessage, setBroadcastMessage] = useState("");
   const [logs, setLogs] = useState(null);
-  const [participantId, setParticipantId] = useState("");
 
   const load = () => getMeetings(filters)
     .then(setData)
@@ -33,12 +33,53 @@ export default function MeetingsPage() {
     load();
   };
 
-  const kickParticipant = async () => {
-    if (!participantId.trim()) return;
-    const result = await meetingAction(kickRoom.room_id, "kick", { participant_id: participantId.trim() });
-    setMessage(result.note || "Kick participant command queued");
-    setKickRoom(null);
-    setParticipantId("");
+  const loadParticipants = (roomId) => {
+    getMeetingParticipants(roomId)
+      .then((data) => setParticipants(data.items || []))
+      .catch((err) => setMessage("Could not load participants: " + (err.response?.data?.detail || err.message)));
+  };
+
+  const openManageParticipants = (room) => {
+    setManageRoom(room);
+    setParticipants([]);
+    loadParticipants(room.room_id);
+  };
+
+  const handleParticipantAction = async (user, actionType) => {
+    let command_type = "";
+    let payload = {};
+    if (actionType === "kick") {
+      command_type = "KICK_PARTICIPANT";
+    } else if (actionType === "mute") {
+      command_type = "MUTE_PARTICIPANT";
+    } else if (actionType === "unmute") {
+      command_type = "UNMUTE_PARTICIPANT";
+    } else if (actionType === "promote") {
+      command_type = "PROMOTE_USER";
+      payload = { role: "host" };
+    } else if (actionType === "transfer") {
+      command_type = "TRANSFER_HOST";
+    } else if (actionType === "suspend") {
+      command_type = "SUSPEND_USER";
+    } else if (actionType === "remove") {
+      command_type = "REMOVE_USER";
+    }
+    
+    try {
+      const result = await issueMeetingCommand(manageRoom.room_id, {
+        command_type,
+        target_user_id: user.user_id,
+        payload
+      });
+      setMessage(result.note || `${command_type} command queued successfully.`);
+      if (actionType !== "suspend" && actionType !== "kick" && actionType !== "remove") {
+        setTimeout(() => loadParticipants(manageRoom.room_id), 1000);
+      } else {
+        setParticipants((current) => current.filter((p) => p.user_id !== user.user_id));
+      }
+    } catch (err) {
+      setMessage("Action failed: " + (err.response?.data?.detail || err.message));
+    }
   };
 
   const exportMeeting = async (meeting) => {
@@ -91,7 +132,7 @@ export default function MeetingsPage() {
             <td><StatusBadge value={meeting.connection_quality} /></td>
             <td><div className="admin-row-actions">
               <button title="End meeting" className="is-danger" disabled={meeting.status !== "active"} onClick={() => endMeeting(meeting)}><LogOut size={15} /></button>
-              <button title="Kick participant" onClick={() => setKickRoom(meeting)}><UserRoundX size={15} /></button>
+              <button title="Manage participants" onClick={() => openManageParticipants(meeting)}><Users size={15} /></button>
               <button title="Lock meeting" onClick={() => command(meeting, "LOCK_MEETING")}><Lock size={15} /></button>
               <button title="Unlock meeting" onClick={() => command(meeting, "UNLOCK_MEETING")}><Unlock size={15} /></button>
               <button title="Mute all" onClick={() => command(meeting, "MUTE_ALL")}><MicOff size={15} /></button>
@@ -107,11 +148,60 @@ export default function MeetingsPage() {
           </tr>)}</tbody></table></div>
         <footer><span>{data.total} meetings</span><div><button disabled={filters.page === 1} onClick={() => setFilters({ ...filters, page: filters.page - 1 })}>Previous</button><b>Page {filters.page}</b><button disabled={filters.page * filters.page_size >= data.total} onClick={() => setFilters({ ...filters, page: filters.page + 1 })}>Next</button></div></footer>
       </section>
-      {kickRoom && <div className="admin-modal-backdrop" onMouseDown={() => setKickRoom(null)}><section className="admin-modal" onMouseDown={(event) => event.stopPropagation()}>
-        <header><div><span>Meeting moderation</span><h2>Kick participant</h2></div><button onClick={() => setKickRoom(null)} aria-label="Close"><X /></button></header>
-        <p>Enter the participant session ID for <strong>{kickRoom.meeting_name}</strong>.</p>
-        <label>Participant session ID<input value={participantId} onChange={(event) => setParticipantId(event.target.value)} placeholder="Session ID" /></label>
-        <button className="admin-button admin-button--danger" onClick={kickParticipant}>Queue kick command</button>
+      {manageRoom && <div className="admin-modal-backdrop" onMouseDown={() => setManageRoom(null)}><section className="admin-modal admin-modal--wide" onMouseDown={(event) => event.stopPropagation()}>
+        <header><div><span>Meeting moderation</span><h2>Manage participants for {manageRoom.meeting_name}</h2></div><button onClick={() => setManageRoom(null)} aria-label="Close"><X /></button></header>
+        <div style={{ maxHeight: "350px", overflowY: "auto" }} className="admin-table-scroll">
+          {participants.length === 0 ? <p style={{ padding: "20px", textAlign: "center" }}>No active participants in this meeting.</p> : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Participant</th>
+                  <th>Email</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {participants.map((p) => (
+                  <tr key={p.user_id}>
+                    <td>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <div style={{
+                          width: "32px",
+                          height: "32px",
+                          borderRadius: "50%",
+                          backgroundColor: "#3b82f6",
+                          color: "#ffffff",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontWeight: "bold",
+                          fontSize: "12px"
+                        }}>
+                          {p.name.slice(0, 2).toUpperCase()}
+                        </div>
+                        <div>
+                          <strong>{p.name}</strong>
+                          <div style={{ fontSize: "11px", color: "#6b7280" }}>@{p.username}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td>{p.email}</td>
+                    <td>
+                      <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                        <button title="Mute" className="admin-button admin-button--secondary" style={{ padding: "4px 8px", fontSize: "11px" }} onClick={() => handleParticipantAction(p, "mute")}>Mute</button>
+                        <button title="Unmute" className="admin-button admin-button--secondary" style={{ padding: "4px 8px", fontSize: "11px" }} onClick={() => handleParticipantAction(p, "unmute")}>Unmute</button>
+                        <button title="Promote to Host" className="admin-button admin-button--secondary" style={{ padding: "4px 8px", fontSize: "11px" }} onClick={() => handleParticipantAction(p, "promote")}>Promote</button>
+                        <button title="Transfer Host" className="admin-button admin-button--secondary" style={{ padding: "4px 8px", fontSize: "11px" }} onClick={() => handleParticipantAction(p, "transfer")}>Transfer Host</button>
+                        <button title="Kick" className="admin-button admin-button--danger" style={{ padding: "4px 8px", fontSize: "11px" }} onClick={() => handleParticipantAction(p, "kick")}>Kick</button>
+                        <button title="Suspend" className="admin-button admin-button--danger" style={{ padding: "4px 8px", fontSize: "11px" }} onClick={() => handleParticipantAction(p, "suspend")}>Suspend</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       </section></div>}
       {broadcastRoom && <div className="admin-modal-backdrop" onMouseDown={() => setBroadcastRoom(null)}><section className="admin-modal" onMouseDown={(event) => event.stopPropagation()}>
         <header><div><span>Live notification</span><h2>Broadcast to {broadcastRoom.meeting_name}</h2></div><button onClick={() => setBroadcastRoom(null)} aria-label="Close"><X /></button></header>

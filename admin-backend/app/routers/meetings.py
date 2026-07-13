@@ -43,6 +43,10 @@ PARTICIPANT_COMMANDS = {
     "KICK_PARTICIPANT",
     "MUTE_PARTICIPANT",
     "UNMUTE_PARTICIPANT",
+    "PROMOTE_USER",
+    "TRANSFER_HOST",
+    "SUSPEND_USER",
+    "REMOVE_USER",
 }
 
 
@@ -120,8 +124,8 @@ async def issue_meeting_command(
     command_type = body.command_type.upper()
     if command_type not in ROOM_COMMANDS | PARTICIPANT_COMMANDS:
         raise HTTPException(status_code=400, detail="Unsupported meeting command")
-    if command_type in PARTICIPANT_COMMANDS and not body.target_session_id:
-        raise HTTPException(status_code=400, detail="target_session_id is required")
+    if command_type in PARTICIPANT_COMMANDS and not body.target_session_id and not body.target_user_id:
+        raise HTTPException(status_code=400, detail="target_session_id or target_user_id is required")
 
     repo = AdminMeetingRepository(get_db())
     payload = {**(body.payload or {})}
@@ -131,7 +135,7 @@ async def issue_meeting_command(
         room_id,
         command_type,
         str(admin["_id"]),
-        participant_id=body.target_session_id,
+        participant_id=body.target_session_id or body.target_user_id,
         payload=payload,
     )
     ack = await control_plane.publish_and_wait(
@@ -186,3 +190,24 @@ async def meeting_logs(room_id: str, _: Annotated[dict, Depends(require_permissi
         if isinstance(row.get("timestamp"), datetime):
             row["timestamp"] = row["timestamp"].isoformat()
     return {"room_id": room_id, "items": json_value(rows)}
+
+
+@router.get("/{room_id}/participants")
+async def meeting_participants(room_id: str, _: Annotated[dict, Depends(require_permission("meetings.read"))]) -> dict:
+    db = get_db()
+    room = await db["rooms"].find_one({"room_id": room_id})
+    if not room:
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    participants = room.get("participants", [])
+    active = []
+    for p in participants:
+        if p.get("left_at") is None:
+            active.append({
+                "user_id": p.get("user_id"),
+                "username": p.get("username"),
+                "name": p.get("name") or p.get("username"),
+                "email": p.get("email"),
+                "joined_at": p.get("joined_at").isoformat() if isinstance(p.get("joined_at"), datetime) else p.get("joined_at"),
+                "country": p.get("country", "")
+            })
+    return {"items": active}

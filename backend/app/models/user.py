@@ -14,6 +14,7 @@ class UserDocument(BaseModel):
     preferred_language: str = "en"
     pronouns: Optional[str] = None
     voice_preference: str = "auto"  # feminine | masculine | neutral | auto
+    gender: str = "neutral"  # feminine | masculine | neutral
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_seen: Optional[datetime] = None
     is_online: bool = False

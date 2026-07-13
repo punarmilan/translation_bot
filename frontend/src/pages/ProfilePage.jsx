@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import { parseApiError } from "../services/api";
+import { parseApiError, getPublicLanguages } from "../services/api";
 
 const LANGUAGE_OPTIONS = [
   { label: "Arabic", value: "ar" },
@@ -43,6 +43,17 @@ export default function ProfilePage() {
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [saving, setSaving] = useState(false);
+  const [languages, setLanguages] = useState(LANGUAGE_OPTIONS);
+
+  useEffect(() => {
+    getPublicLanguages()
+      .then((data) => {
+        if (data?.items) {
+          setLanguages(data.items.map((item) => ({ label: item.name, value: item.code })));
+        }
+      })
+      .catch((err) => console.warn("Failed to fetch dynamic languages", err));
+  }, []);
   const [form, setForm] = useState(() => ({
     preferred_language: user?.preferred_language || "en",
     pronouns: optionValueForPronouns(user?.pronouns),
@@ -136,7 +147,7 @@ export default function ProfilePage() {
             onChange={handleChange}
             className="ui-input text-sm"
           >
-            {LANGUAGE_OPTIONS.map((language) => (
+            {languages.map((language) => (
               <option key={language.value} value={language.value}>
                 {language.label}
               </option>

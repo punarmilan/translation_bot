@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import { parseApiError } from "../services/api";
+import { parseApiError, getPublicLanguages } from "../services/api";
 
 const LANGUAGE_OPTIONS = [
   { label: "Arabic", value: "ar" },
@@ -47,6 +47,17 @@ export default function SignupPage() {
   });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [languages, setLanguages] = useState(LANGUAGE_OPTIONS);
+
+  useEffect(() => {
+    getPublicLanguages()
+      .then((data) => {
+        if (data?.items) {
+          setLanguages(data.items.map((item) => ({ label: item.name, value: item.code })));
+        }
+      })
+      .catch((err) => console.warn("Failed to fetch dynamic languages", err));
+  }, []);
 
   const handleChange = (e) => {
     if (error) setError("");
@@ -117,7 +128,7 @@ export default function SignupPage() {
               disabled={loading}
               value={form.name}
               onChange={handleChange}
-              placeholder="Bhumika"
+              placeholder="WorknAi"
               className="ui-input text-sm"
             />
           </label>
@@ -162,7 +173,7 @@ export default function SignupPage() {
                 disabled={loading}
                 className="ui-input text-sm"
               >
-                {LANGUAGE_OPTIONS.map((l) => (
+                {languages.map((l) => (
                   <option key={l.value} value={l.value}>
                     {l.label}
                   </option>

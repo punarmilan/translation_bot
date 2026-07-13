@@ -4,7 +4,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-UserRole = Literal["admin", "host", "participant"]
+UserRole = Literal["admin", "host", "co-host", "participant"]
 ChatDeliveryMode = Literal["broadcast", "direct"]
 ListenerMode = Literal[
     "original_audio_only",
@@ -97,6 +97,13 @@ class RoomMember(BaseModel):
     role: UserRole
     pronouns: str | None = None
     voice_preference: str = "auto"
+    is_muted: bool = False
+    is_camera_off: bool = True
+    is_speaking: bool = False
+    is_translating: bool = False
+    is_listening: bool = False
+    is_generating_speech: bool = False
+    hand_raised: bool = False
 
 
 class RoomPresenceMessage(BaseModel):

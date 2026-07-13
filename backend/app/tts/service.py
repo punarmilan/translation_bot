@@ -134,8 +134,110 @@ class TTSUnavailableError(RuntimeError):
     pass
 
 
+class PersistentPiperProcess:
+    def __init__(self, model_path: str, config_path: str | None) -> None:
+        self.model_path = model_path
+        self.config_path = config_path
+        self.process: subprocess.Popen | None = None
+        self.lock = asyncio.Lock()
+
+    def start(self) -> None:
+        command = [
+            PIPER_EXECUTABLE,
+            "--model",
+            self.model_path,
+            "--json-input",
+        ]
+        if self.config_path:
+            command.extend(["--config", self.config_path])
+        logger.info(f"Starting persistent Piper process for model: {self.model_path}")
+        self.process = subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def stop(self) -> None:
+        if self.process:
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=2.0)
+            except Exception:
+                try:
+                    self.process.kill()
+                except Exception:
+                    pass
+            self.process = None
+
+    async def synthesize(self, text: str, length_scale: str, sentence_silence: str, noise_scale: str, noise_w: str) -> tuple[bytes, str]:
+        async with self.lock:
+            if not self.process or self.process.poll() is not None:
+                self.start()
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_file:
+                temp_path = Path(temp_file.name)
+
+            try:
+                payload = {
+                    "text": text,
+                    "output_file": str(temp_path),
+                }
+                if length_scale:
+                    payload["length_scale"] = float(length_scale)
+                if sentence_silence:
+                    payload["sentence_silence"] = float(sentence_silence)
+                if noise_scale:
+                    payload["noise_scale"] = float(noise_scale)
+                if noise_w:
+                    payload["noise_w"] = float(noise_w)
+
+                raw_line = (json.dumps(payload) + "\n").encode("utf-8")
+                await asyncio.to_thread(self._write_stdin, raw_line)
+                stdout_line = await asyncio.to_thread(self._read_stdout)
+
+                if not stdout_line:
+                    raise TTSUnavailableError("Piper process stdout stream closed prematurely.")
+
+                audio_bytes = await asyncio.to_thread(temp_path.read_bytes)
+                return audio_bytes, str(temp_path)
+            finally:
+                await asyncio.to_thread(temp_path.unlink, True)
+
+    def _write_stdin(self, data: bytes) -> None:
+        self.process.stdin.write(data)
+        self.process.stdin.flush()
+
+    def _read_stdout(self) -> str:
+        line = self.process.stdout.readline()
+        return line.decode("utf-8", errors="replace").strip()
+
+
 class PiperProvider:
     name = "piper"
+
+    def __init__(self) -> None:
+        self._processes: dict[str, PersistentPiperProcess] = {}
+
+    async def initialize(self) -> None:
+        # Pre-warm ready voice models on startup
+        for language in PIPER_SUPPORTED_LANGUAGES:
+            for preference in ("auto", "neutral", "feminine", "masculine"):
+                try:
+                    route = resolve_voice_route(language, preference)
+                    model = str(route.model_path)
+                    config = str(route.config_path) if route.config_path.exists() else None
+                    if route.model_path.exists() and model not in self._processes:
+                        proc = PersistentPiperProcess(model, config)
+                        await asyncio.to_thread(proc.start)
+                        self._processes[model] = proc
+                except Exception as e:
+                    logger.error(f"Failed to pre-warm voice model: {e}")
+
+    async def close(self) -> None:
+        for proc in list(self._processes.values()):
+            await asyncio.to_thread(proc.stop)
+        self._processes.clear()
 
     def status(self) -> dict:
         voices = {}
@@ -198,12 +300,26 @@ class PiperProvider:
         started = perf_counter()
         normalized_profile = speech_profile if speech_profile in SPEECH_PROFILES else "natural"
         normalized_text = prepare_tts_text(text.strip())
-        audio_bytes, output_file = await asyncio.to_thread(
-            self._run_piper,
+
+        if model not in self._processes:
+            proc = PersistentPiperProcess(model, config)
+            await asyncio.to_thread(proc.start)
+            self._processes[model] = proc
+        else:
+            proc = self._processes[model]
+
+        profile = SPEECH_PROFILES[normalized_profile]
+        length_scale = PIPER_LENGTH_SCALE or profile["length_scale"]
+        sentence_silence = PIPER_SENTENCE_SILENCE or profile["sentence_silence"]
+        noise_scale = profile["noise_scale"]
+        noise_w = profile["noise_w"]
+
+        audio_bytes, output_file = await proc.synthesize(
             normalized_text,
-            model,
-            config,
-            normalized_profile,
+            length_scale,
+            sentence_silence,
+            noise_scale,
+            noise_w,
         )
         return TTSResult(
             audio_bytes=audio_bytes,
@@ -219,78 +335,45 @@ class PiperProvider:
             fallback_used=route.fallback_used,
         )
 
-    def _run_piper(
-        self,
-        text: str,
-        model: str,
-        config: str,
-        speech_profile: str,
-    ) -> tuple[bytes, str]:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as audio_file:
-            audio_path = Path(audio_file.name)
-        profile = SPEECH_PROFILES[speech_profile]
 
-        command = [
-            PIPER_EXECUTABLE,
-            "--model",
-            model,
-            "--output_file",
-            str(audio_path),
-        ]
-        if config:
-            command.extend(["--config", config])
-        length_scale = PIPER_LENGTH_SCALE or profile["length_scale"]
-        sentence_silence = PIPER_SENTENCE_SILENCE or profile["sentence_silence"]
-        if length_scale:
-            command.extend(["--length_scale", length_scale])
-        if sentence_silence:
-            command.extend(["--sentence_silence", sentence_silence])
-        if profile["noise_scale"]:
-            command.extend(["--noise_scale", profile["noise_scale"]])
-        if profile["noise_w"]:
-            command.extend(["--noise_w", profile["noise_w"]])
+class TTSCache:
+    def __init__(self, max_size: int = 512) -> None:
+        self.max_size = max_size
+        self._cache: dict[tuple, TTSResult] = {}
+        self._keys: list[tuple] = []
+        self._lock = asyncio.Lock()
 
-        try:
-            logger.info(
-                json.dumps(
-                    {
-                        "event": "tts.piper_command",
-                        "requested_profile": speech_profile,
-                        "selected_voice_model": model,
-                        "selected_voice_config": config or None,
-                        "output_file": str(audio_path),
-                    },
-                    ensure_ascii=False,
-                    sort_keys=True,
-                )
-            )
-            completed = subprocess.run(
-                command,
-                input=text.encode("utf-8"),
-                capture_output=True,
-                timeout=PIPER_TIMEOUT_SECONDS,
-                check=False,
-            )
-            if completed.returncode != 0:
-                error = (
-                    completed.stderr.decode("utf-8", errors="replace").strip()
-                    or completed.stdout.decode("utf-8", errors="replace").strip()
-                )
-                raise TTSUnavailableError(f"Piper failed: {error}")
-            return audio_path.read_bytes(), str(audio_path)
-        except FileNotFoundError as exc:
-            raise TTSUnavailableError(
-                f"Piper executable not found: {PIPER_EXECUTABLE}"
-            ) from exc
-        except subprocess.TimeoutExpired as exc:
-            raise TTSUnavailableError("Piper synthesis timed out") from exc
-        finally:
-            audio_path.unlink(missing_ok=True)
+    async def get(self, key: tuple) -> TTSResult | None:
+        async with self._lock:
+            if key in self._cache:
+                self._keys.remove(key)
+                self._keys.append(key)
+                return self._cache[key]
+            return None
+
+    async def set(self, key: tuple, value: TTSResult) -> None:
+        async with self._lock:
+            if key in self._cache:
+                self._keys.remove(key)
+            elif len(self._cache) >= self.max_size:
+                oldest = self._keys.pop(0)
+                del self._cache[oldest]
+            self._cache[key] = value
+            self._keys.append(key)
 
 
 class TTSService:
     def __init__(self, provider: TTSProvider | None = None) -> None:
         self.provider = provider or PiperProvider()
+        self.cache = TTSCache(max_size=512)
+
+    async def initialize(self) -> None:
+        if hasattr(self.provider, "initialize"):
+            await self.provider.initialize()
+
+    async def close(self) -> None:
+        if hasattr(self.provider, "close"):
+            await self.provider.close()
 
     def status(self) -> dict:
         return self.provider.status()
@@ -302,6 +385,11 @@ class TTSService:
         voice_preference: str | None = "auto",
         speech_profile: str = "natural",
     ) -> TTSResult:
+        cache_key = (text.strip(), language, voice_preference, speech_profile)
+        cached = await self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         try:
             result = await self.provider.synthesize(
                 text,
@@ -309,6 +397,7 @@ class TTSService:
                 voice_preference=voice_preference,
                 speech_profile=speech_profile,
             )
+            await self.cache.set(cache_key, result)
         except Exception as exc:
             logger.warning(
                 json.dumps(

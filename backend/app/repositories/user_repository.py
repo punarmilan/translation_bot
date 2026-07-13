@@ -27,16 +27,20 @@ class UserRepository:
         pronouns: str | None = None,
         voice_preference: str = "auto",
         username: str | None = None,
+        gender: str = "neutral",
     ) -> dict:
         normalized_role = role.lower().strip()
         normalized_language = preferred_language.lower().strip()
         normalized_voice = voice_preference.lower().strip()
+        normalized_gender = gender.lower().strip() if gender else "neutral"
         if normalized_role not in VALID_ROLES:
             normalized_role = "participant"
         if normalized_language not in VALID_LANGUAGES:
             normalized_language = "en"
         if normalized_voice not in VALID_VOICE_PREFERENCES:
             normalized_voice = "auto"
+        if normalized_gender not in {"feminine", "masculine", "neutral"}:
+            normalized_gender = "neutral"
 
         clean_email = email.lower().strip()
         clean_name = name.strip()
@@ -51,6 +55,7 @@ class UserRepository:
             "preferred_language": normalized_language,
             "pronouns": normalize_optional(pronouns),
             "voice_preference": normalized_voice,
+            "gender": normalized_gender,
             "created_at": datetime.utcnow(),
             "last_seen": None,
             "is_online": False,
@@ -90,13 +95,17 @@ class UserRepository:
         preferred_language: str,
         pronouns: str | None,
         voice_preference: str,
+        gender: str = "neutral",
     ) -> Optional[dict]:
         normalized_language = preferred_language.lower().strip()
         normalized_voice = voice_preference.lower().strip()
+        normalized_gender = gender.lower().strip() if gender else "neutral"
         if normalized_language not in VALID_LANGUAGES:
             normalized_language = "en"
         if normalized_voice not in VALID_VOICE_PREFERENCES:
             normalized_voice = "auto"
+        if normalized_gender not in {"feminine", "masculine", "neutral"}:
+            normalized_gender = "neutral"
 
         await self.collection.update_one(
             {"_id": ObjectId(user_id)},
@@ -105,6 +114,7 @@ class UserRepository:
                     "preferred_language": normalized_language,
                     "pronouns": normalize_optional(pronouns),
                     "voice_preference": normalized_voice,
+                    "gender": normalized_gender,
                 }
             },
         )

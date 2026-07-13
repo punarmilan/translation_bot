@@ -28,10 +28,14 @@ async def lifespan(app: FastAPI):
     from app.runtime_settings import runtime_settings
     await runtime_settings.load_from_db(db)
 
+    from app.tts.service import tts_service
+    await tts_service.initialize()
+
     app.state.control_consumer = ControlConsumer(websocket_manager)
     app.state.control_consumer.start()
     yield
     await app.state.control_consumer.stop()
+    await tts_service.close()
     await disconnect_db()
 
 

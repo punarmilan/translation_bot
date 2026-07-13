@@ -16,8 +16,9 @@ PUBLIC_SIGNUP_ROLES = {"host", "participant"}
 VALID_LANGUAGES = {"ar", "de", "en", "es", "fr", "hi", "it", "nl", "pt", "ru"}
 VALID_PRONOUNS = {"she/her", "he/him", "they/them", "prefer not to say"}
 VALID_VOICE_PREFERENCES = {"feminine", "masculine", "neutral", "auto"}
-UserRole = Literal["admin", "host", "participant"]
+UserRole = Literal["admin", "host", "co-host", "participant"]
 VoicePreference = Literal["feminine", "masculine", "neutral", "auto"]
+GenderType = Literal["feminine", "masculine", "neutral"]
 
 
 class SignupRequest(BaseModel):
@@ -28,8 +29,9 @@ class SignupRequest(BaseModel):
     role: str = "participant"
     pronouns: str | None = Field(default=None, max_length=40)
     voice_preference: VoicePreference = "auto"
+    gender: GenderType = "neutral"
 
-    @field_validator("name", "email", "preferred_language", "role", "voice_preference")
+    @field_validator("name", "email", "preferred_language", "role", "voice_preference", "gender")
     @classmethod
     def strip_strings(cls, value: str) -> str:
         return value.strip()
@@ -87,6 +89,7 @@ class AuthResponse(BaseModel):
     preferred_language: str
     pronouns: str | None = None
     voice_preference: VoicePreference = "auto"
+    gender: GenderType = "neutral"
 
 
 class SignupResponse(BaseModel):
@@ -98,14 +101,16 @@ class SignupResponse(BaseModel):
     preferred_language: str
     pronouns: str | None = None
     voice_preference: VoicePreference = "auto"
+    gender: GenderType = "neutral"
 
 
 class ProfileUpdateRequest(BaseModel):
     preferred_language: str = "en"
     pronouns: str | None = Field(default=None, max_length=40)
     voice_preference: VoicePreference = "auto"
+    gender: GenderType = "neutral"
 
-    @field_validator("preferred_language", "voice_preference")
+    @field_validator("preferred_language", "voice_preference", "gender")
     @classmethod
     def strip_strings(cls, value: str) -> str:
         return value.lower().strip()
@@ -129,6 +134,7 @@ def public_user_for(user: dict) -> dict:
         "preferred_language": user.get("preferred_language", "en"),
         "pronouns": user.get("pronouns"),
         "voice_preference": user.get("voice_preference", "auto"),
+        "gender": user.get("gender", "neutral"),
     }
 
 
@@ -166,6 +172,7 @@ async def signup(body: SignupRequest) -> SignupResponse:
             preferred_language=body.preferred_language,
             pronouns=body.pronouns,
             voice_preference=body.voice_preference,
+            gender=body.gender,
         )
     except DuplicateKeyError as exc:
         key_pattern = getattr(exc, "details", {}).get("keyPattern", {})
@@ -225,6 +232,7 @@ async def update_me(
         preferred_language=body.preferred_language,
         pronouns=body.pronouns,
         voice_preference=body.voice_preference,
+        gender=body.gender,
     )
     if not updated:
         raise HTTPException(status_code=404, detail="User not found")

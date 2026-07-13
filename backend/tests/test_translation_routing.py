@@ -1,7 +1,7 @@
 import asyncio
 import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from starlette.websockets import WebSocketState
 
@@ -23,6 +23,9 @@ class FakeCollection:
 class FakeDatabase:
     def __getitem__(self, name: str) -> FakeCollection:
         return FakeCollection()
+class FakeClient:
+    def __init__(self) -> None:
+        self.host = "127.0.0.1"
 
 
 class FakeWebSocket:
@@ -50,16 +53,33 @@ def delivered_messages(websocket: FakeWebSocket) -> list[dict]:
 
 
 class TranslationRoutingTest(unittest.IsolatedAsyncioTestCase):
-    def setUp(self) -> None:
-        patcher = patch("app.websocket_manager.get_db", return_value=FakeDatabase())
-        patcher.start()
-        self.addCleanup(patcher.stop)
+    async def asyncSetUp(self) -> None:
+        self.mock_db = MagicMock()
+        self.mock_db.__getitem__.return_value = AsyncMock()
+        
+        self.patch_get_db = patch("app.websocket_manager.get_db", return_value=self.mock_db)
+        self.patch_get_db.start()
+        
+        self.patch_user_repo = patch("app.websocket_manager.UserRepository")
+        self.mock_user_repo_cls = self.patch_user_repo.start()
+        self.mock_user_repo = AsyncMock()
+        self.mock_user_repo.get_by_id.return_value = {"email": "test@example.com"}
+        self.mock_user_repo_cls.return_value = self.mock_user_repo
+        
+        self.patch_room_repo = patch("app.websocket_manager.RoomRepository")
+        self.mock_room_repo_cls = self.patch_room_repo.start()
+        self.mock_room_repo = AsyncMock()
+        self.mock_room_repo_cls.return_value = self.mock_room_repo
 
     async def asyncTearDown(self) -> None:
         if hasattr(self, "manager"):
             sockets = [session.websocket for session in list(self.manager.sessions.values())]
             for socket in sockets:
                 await self.manager.disconnect(socket, "room")
+        
+        self.patch_get_db.stop()
+        self.patch_user_repo.stop()
+        self.patch_room_repo.stop()
 
     async def connect_room(self) -> dict[str, FakeWebSocket]:
         self.manager = RoomConnectionManager()

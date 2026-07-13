@@ -1,3 +1,4 @@
+import { Copy } from "lucide-react";
 import TranslatedAudioPlayer from "./TranslatedAudioPlayer";
 import Panel from "./ui/Panel";
 import StatusBadge from "./ui/StatusBadge";
@@ -132,31 +133,74 @@ export default function TranslationPanel({
           <h3 className="text-sm font-semibold text-brand-bg">Recent captions</h3>
           <span className="text-xs text-ui-subtle">{transcripts.length}</span>
         </div>
-        <div className="meeting-scroll max-h-80 space-y-2 overflow-y-auto pr-1">
+        <div className="meeting-scroll max-h-80 space-y-3 overflow-y-auto pr-1">
           {transcripts.length === 0 ? (
             <div className="rounded-control bg-ui-secondary px-3 py-4 text-center text-xs leading-5 text-ui-subtle">
               Captions appear after someone speaks in the meeting.
             </div>
           ) : (
             transcripts.map((item) => (
-              <article key={item.id} className="rounded-control bg-ui-secondary p-3">
-                <div className="flex items-center justify-between gap-2">
+              <article key={item.id} className="rounded-control bg-ui-secondary p-3.5 border border-white/[0.04] space-y-3">
+                <div className="flex items-center justify-between gap-2 border-b border-white/[0.04] pb-2">
                   <p className="truncate text-xs font-semibold text-brand-bg">{item.sender}</p>
-                  <span className="text-[11px] text-ui-subtle">{item.total_latency_ms}ms</span>
+                  <span className="text-[10px] bg-brand-accent/15 text-brand-accent px-1.5 py-0.5 rounded font-mono font-bold">
+                    {item.total_latency_ms ? `${item.total_latency_ms}ms` : "-"}
+                  </span>
                 </div>
-                <p className="mt-2 text-sm leading-5 text-brand-bg">{item.original}</p>
-                {item.original !== item.translated && (
-                  <div className="mt-2 border-t border-white/[0.06] pt-2">
-                    <p className="text-[11px] font-medium uppercase text-brand-accent">
-                      {item.detected_language} to {item.target_language}
-                    </p>
-                    <p className="mt-1 text-sm leading-5 text-ui-muted">{item.translated}</p>
+
+                <div className="text-xs space-y-2.5">
+                  {/* Original Text segment */}
+                  <div>
+                    <div className="flex justify-between items-center text-ui-subtle mb-1 text-[10px]">
+                      <span className="font-semibold uppercase tracking-wider">Original Text ({item.detected_language?.toUpperCase() || "..."})</span>
+                      <button
+                        onClick={() => navigator.clipboard.writeText(item.original)}
+                        className="hover:text-brand-accent transition flex items-center gap-1 text-[10px] bg-white/[0.04] px-1.5 py-0.5 rounded"
+                        title="Copy original text"
+                      >
+                        <Copy size={10} />
+                        Copy
+                      </button>
+                    </div>
+                    <p className="text-sm text-brand-bg bg-brand-dark/20 p-2 rounded">{item.original}</p>
                   </div>
-                )}
-                <div className="mt-2 flex flex-wrap gap-x-3 text-[11px] text-ui-subtle">
-                  <span>STT {item.stt_latency_ms}ms</span>
-                  <span>Translate {item.translation_latency_ms}ms</span>
-                  {item.tts_latency_ms ? <span>Voice {item.tts_latency_ms}ms</span> : null}
+
+                  {/* Flow Arrow */}
+                  {item.original !== item.translated && (
+                    <div className="flex justify-center text-brand-accent font-semibold select-none text-[11px]">
+                      ⬇ Translated to {item.target_language?.toUpperCase()}
+                    </div>
+                  )}
+
+                  {/* Translated Text segment */}
+                  {item.original !== item.translated && (
+                    <div>
+                      <div className="flex justify-between items-center text-ui-subtle mb-1 text-[10px]">
+                        <span className="font-semibold uppercase tracking-wider">Translated Text ({item.target_language?.toUpperCase()})</span>
+                        <button
+                          onClick={() => navigator.clipboard.writeText(item.translated)}
+                          className="hover:text-brand-accent transition flex items-center gap-1 text-[10px] bg-white/[0.04] px-1.5 py-0.5 rounded"
+                          title="Copy translated text"
+                        >
+                          <Copy size={10} />
+                          Copy
+                        </button>
+                      </div>
+                      <p className="text-sm text-ui-muted bg-brand-dark/20 p-2 rounded">{item.translated}</p>
+                    </div>
+                  )}
+
+                  {/* Latency breakdown pipeline details */}
+                  <div className="flex flex-wrap gap-2 text-[10px] text-ui-subtle border-t border-white/[0.04] pt-2">
+                    <span className="bg-ui-elevated px-1.5 py-0.5 rounded">STT: {item.stt_latency_ms || "-"}ms</span>
+                    <span className="bg-ui-elevated px-1.5 py-0.5 rounded">Translate: {item.translation_latency_ms || "-"}ms</span>
+                    {item.tts_latency_ms && (
+                      <span className="bg-ui-elevated px-1.5 py-0.5 rounded">TTS: {item.tts_latency_ms}ms</span>
+                    )}
+                    <span className="bg-ui-success/10 text-ui-success px-1.5 py-0.5 rounded font-medium">
+                      TTS Status: {item.tts_latency_ms ? "Synthesized" : "Skipped"}
+                    </span>
+                  </div>
                 </div>
               </article>
             ))

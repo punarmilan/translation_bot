@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
+import { MicOff } from "lucide-react";
 import StatusBadge from "./ui/StatusBadge";
 
 function VideoTile({
@@ -15,7 +16,9 @@ function VideoTile({
   const videoTrack = stream?.getVideoTracks?.()[0];
   const audioOn = Boolean(audioTrack?.enabled);
   const videoReady = Boolean(videoTrack && videoTrack.readyState === "live" && !cameraOff);
-  const speaking = translationStatus === "Listening...";
+  const speaking = translationStatus === "Listening..." || member?.is_speaking;
+  const isMuted = member?.is_muted ?? !audioOn;
+  const handRaised = member?.hand_raised;
 
   useEffect(() => {
     if (videoRef.current && stream) {
@@ -27,10 +30,35 @@ function VideoTile({
     <article
       className={`video-tile group relative aspect-video min-h-52 overflow-hidden rounded-large border bg-brand-dark shadow-panel transition-ui ${
         speaking
-          ? "border-brand-accent shadow-[0_0_0_2px_rgba(91,141,239,0.18)]"
+          ? "border-brand-accent shadow-[0_0_15px_rgba(91,141,239,0.5)] animate-pulse"
           : "border-white/[0.06]"
       }`}
     >
+      {/* Speaking Indicator Badge overlay */}
+      {speaking && (
+        <div className="absolute top-3 left-3 bg-brand-accent text-white px-2 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1.5 shadow-md z-20">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
+          </span>
+          Speaking
+        </div>
+      )}
+
+      {/* Hand Raised overlay badge */}
+      {handRaised && (
+        <div className="absolute top-3 right-3 bg-amber-500 text-white rounded-full p-1.5 shadow-lg animate-bounce z-20" title="Hand Raised">
+          <span className="text-sm leading-none">✋</span>
+        </div>
+      )}
+
+      {/* Mic Muted icon overlay */}
+      {isMuted && (
+        <div className="absolute bottom-3 right-3 bg-red-600/85 backdrop-blur text-white p-1.5 rounded-full shadow-md z-20" title="Muted">
+          <MicOff size={13} />
+        </div>
+      )}
+
       {stream && videoReady ? (
         <video
           ref={videoRef}

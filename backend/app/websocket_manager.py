@@ -94,6 +94,13 @@ class ClientSession:
     connected: bool = True
     active_peer_session_id: str | None = None
     in_meeting: bool = False
+    is_muted: bool = False
+    is_camera_off: bool = True
+    is_speaking: bool = False
+    is_translating: bool = False
+    is_listening: bool = False
+    is_generating_speech: bool = False
+    hand_raised: bool = False
     voice_chunk_in_progress: bool = False
     voice_chunk_queue: asyncio.Queue[IncomingVoiceChunkMessage | None] = field(
         default_factory=lambda: asyncio.Queue(maxsize=VOICE_CHUNK_QUEUE_MAX_SIZE)
@@ -191,6 +198,13 @@ class RoomConnectionManager:
 
         async with self._lock:
             room = self.rooms.setdefault(room_id, RoomState(room_id=room_id))
+            is_new_room = len(room.sessions) == 0
+            if is_new_room:
+                session.role = "host"
+                room.meeting_host_session_id = session.session_id
+            else:
+                session.role = "participant"
+
             room.sessions[session.session_id] = session
             self.sessions[session.session_id] = session
             self.sessions_by_socket[websocket] = session.session_id
@@ -627,6 +641,28 @@ class RoomConnectionManager:
         )
         return True
 
+    async def handle_status_update(
+        self,
+        websocket: WebSocket,
+        is_muted: bool | None = None,
+        is_camera_off: bool | None = None,
+        hand_raised: bool | None = None,
+    ) -> bool:
+        async with self._lock:
+            session = self._session_for_socket_unlocked(websocket)
+            if not session:
+                return False
+            if is_muted is not None:
+                session.is_muted = is_muted
+            if is_camera_off is not None:
+                session.is_camera_off = is_camera_off
+            if hand_raised is not None:
+                session.hand_raised = hand_raised
+            room_id = session.room_id
+
+        await self.broadcast_presence(room_id)
+        return True
+
     async def process_voice_chunk(
         self,
         sender_socket: WebSocket,
@@ -849,6 +885,13 @@ class RoomConnectionManager:
                 )
                 return
 
+            try:
+                db = get_db()
+                room_repo = RoomRepository(db)
+                await room_repo.update_voice_seconds(message.room_id, stt_result.duration_seconds)
+            except Exception as e:
+                logger.error(f"Error updating room voice seconds: {e}")
+
             detection = await detect_language_profile(
                 transcript,
                 language_hint=stt_result.language or sender.preferred_language,
@@ -866,31 +909,20 @@ class RoomConnectionManager:
                     latency_ms=stt_result.latency_ms,
                     message="Transcript ready.",
                 )
-            result_by_language: dict[str, TranslationResult] = {}
-            latency_by_language: dict[str, int] = {}
             translation_recipients = [
                 receiver
                 for receiver in recipients
                 if receiver.listener_mode != "original_audio_only"
             ]
 
-            async def result_for_language(target_language: str) -> TranslationResult:
-                target = normalize_language(target_language)
-                cached_result = result_by_language.get(target)
-                if cached_result:
-                    return cached_result
-
-                target_receivers = [
-                    receiver
-                    for receiver in translation_recipients
-                    if normalize_language(receiver.preferred_language) == target
-                ]
-                for receiver in target_receivers:
+            async def process_target_language(target_lang: str, receivers: list[ClientSession]) -> None:
+                # 1. Send translating status
+                for receiver in receivers:
                     self._send_translation_status(
                         receiver,
                         sender=sender,
                         detected_language=source_language,
-                        target_language=target,
+                        target_language=target_lang,
                         sequence=message.sequence,
                         stage="translation",
                         status="started",
@@ -898,122 +930,118 @@ class RoomConnectionManager:
                     )
 
                 translation_started = perf_counter()
-                if target == source_language:
+                try:
+                    if target_lang == source_language:
+                        result = TranslationResult(
+                            original=transcript,
+                            translated=transcript,
+                            source_language=source_language,
+                            target_language=target_lang,
+                            status="skipped_same_language",
+                            mixed_language=detection.mixed_language,
+                        )
+                    else:
+                        result = await translate_text(
+                            text=transcript,
+                            target_lang=target_lang,
+                            source_lang=source_language,
+                            mixed_language=detection.mixed_language,
+                            context=TranslationContext(
+                                speaker_language=source_language,
+                                target_language=target_lang,
+                                speaker_pronouns=sender.pronouns,
+                                speaker_voice_preference=sender.voice_preference,
+                                speaker_session_id=sender.session_id,
+                            ),
+                        )
+                except Exception as exc:
                     result = TranslationResult(
                         original=transcript,
-                        translated=transcript,
+                        translated="",
                         source_language=source_language,
-                        target_language=target,
-                        status="skipped_same_language",
-                        mixed_language=detection.mixed_language,
-                    )
-                    log_translation_event("translation.skipped", result=result)
-                else:
-                    result = await translate_text(
-                        text=transcript,
-                        target_lang=target,
-                        source_lang=source_language,
-                        mixed_language=detection.mixed_language,
-                        context=TranslationContext(
-                            speaker_language=source_language,
-                            target_language=target,
-                            speaker_pronouns=sender.pronouns,
-                            speaker_voice_preference=sender.voice_preference,
-                            speaker_session_id=sender.session_id,
-                        ),
+                        target_language=target_lang,
+                        status="failed",
+                        error=str(exc),
                     )
 
-                latency_by_language[target] = int((perf_counter() - translation_started) * 1000)
-                result_by_language[target] = result
-                return result
+                translation_latency = int((perf_counter() - translation_started) * 1000)
 
-            target_languages = {
-                normalize_language(session.preferred_language)
-                for session in translation_recipients
-            }
-            await asyncio.gather(
-                *(result_for_language(language) for language in target_languages)
-            )
-
-            audio_targets_by_language: dict[str, list[ClientSession]] = {}
-
-            for receiver in translation_recipients:
-                result = await result_for_language(receiver.preferred_language)
-                total_latency_ms = int((perf_counter() - started) * 1000)
-                self._send_translation_status(
-                    receiver,
-                    sender=sender,
-                    detected_language=result.source_language,
-                    target_language=result.target_language,
-                    sequence=message.sequence,
-                    stage="translation",
-                    status="success" if not result.error else "failed",
-                    latency_ms=latency_by_language.get(result.target_language, 0),
-                    message=(
-                        "Translation is unavailable for this language pair."
-                        if result.error
-                        else None
-                    ),
-                )
-
-                if realtime_translation_service.should_send_transcript(receiver.listener_mode):
-                    payload = TranslatedTranscriptMessage.create(
-                        room_id=message.room_id,
-                        sender_session_id=sender.session_id,
-                        sender=sender.username,
-                        original=transcript,
-                        translated=result.translated,
+                # 2. Send translation status & transcript
+                for receiver in receivers:
+                    total_latency_ms = int((perf_counter() - started) * 1000)
+                    self._send_translation_status(
+                        receiver,
+                        sender=sender,
                         detected_language=result.source_language,
                         target_language=result.target_language,
                         sequence=message.sequence,
-                        stt_provider=stt_result.provider,
-                        stt_latency_ms=stt_result.latency_ms,
-                        translation_latency_ms=latency_by_language.get(result.target_language, 0),
-                        total_latency_ms=total_latency_ms,
-                        translation_status=result.status,
-                        translation_error=result.error,
+                        stage="translation",
+                        status="success" if not result.error else "failed",
+                        latency_ms=translation_latency,
+                        message="Translation is unavailable for this language pair." if result.error else None,
                     )
-                    self._enqueue(receiver, payload.model_dump_json(), event="voice_transcript")
 
-                should_send_audio = (
-                    receiver.session_id != sender.session_id
-                    and realtime_translation_service.should_send_translated_audio(
-                        receiver.listener_mode
-                    )
+                    if realtime_translation_service.should_send_transcript(receiver.listener_mode):
+                        payload = TranslatedTranscriptMessage.create(
+                            room_id=message.room_id,
+                            sender_session_id=sender.session_id,
+                            sender=sender.username,
+                            original=transcript,
+                            translated=result.translated,
+                            detected_language=result.source_language,
+                            target_language=result.target_language,
+                            sequence=message.sequence,
+                            stt_provider=stt_result.provider,
+                            stt_latency_ms=stt_result.latency_ms,
+                            translation_latency_ms=translation_latency,
+                            total_latency_ms=total_latency_ms,
+                            translation_status=result.status,
+                            translation_error=result.error,
+                        )
+                        self._enqueue(receiver, payload.model_dump_json(), event="voice_transcript")
+
+                # 3. Deliver TTS Audio if needed
+                audio_receivers = [
+                    r for r in receivers
+                    if r.session_id != sender.session_id
+                    and realtime_translation_service.should_send_translated_audio(r.listener_mode)
                     and result.target_language != source_language
                     and result.translated.strip()
                     and result.status == "success"
-                )
-                if should_send_audio:
-                    audio_targets_by_language.setdefault(result.target_language, []).append(receiver)
-
-            for target_language, target_sessions in audio_targets_by_language.items():
-                result = await result_for_language(target_language)
-                asyncio.create_task(
-                    self._deliver_translation_audio(
+                ]
+                if audio_receivers:
+                    await self._deliver_translation_audio(
                         room_id=message.room_id,
                         sender=sender,
-                        receivers=target_sessions,
+                        receivers=audio_receivers,
                         translated_text=result.translated,
                         detected_language=source_language,
-                        target_language=target_language,
+                        target_language=target_lang,
                         sequence=message.sequence,
                         started_at=started,
                         stt_latency_ms=stt_result.latency_ms,
-                        translation_latency_ms=latency_by_language.get(target_language, 0),
+                        translation_latency_ms=translation_latency,
                         transcript=transcript,
                         duration_seconds=stt_result.duration_seconds,
                     )
-                )
+
+            # Group receivers by normalize_language(receiver.preferred_language)
+            receivers_by_lang: dict[str, list[ClientSession]] = {}
+            for receiver in translation_recipients:
+                lang = normalize_language(receiver.preferred_language)
+                receivers_by_lang.setdefault(lang, []).append(receiver)
+
+            # Spawn parallel tasks
+            for lang, lang_receivers in receivers_by_lang.items():
+                asyncio.create_task(process_target_language(lang, lang_receivers))
 
             self._log_voice_event(
-                "transcript_broadcast",
+                "transcript_parallel_dispatch",
                 session=sender,
                 sequence=message.sequence,
                 detected_language=source_language,
                 recipient_count=len(recipients),
                 stt_latency_ms=stt_result.latency_ms,
-                total_latency_ms=int((perf_counter() - started) * 1000),
             )
         finally:
             async with self._lock:
@@ -1178,7 +1206,6 @@ class RoomConnectionManager:
             room_repo = RoomRepository(db)
             trans_log_repo = TranslationLogRepository(db)
             
-            await room_repo.update_voice_seconds(room_id, duration_seconds)
             await trans_log_repo.log(
                 room_id=room_id,
                 speaker=sender.username,
@@ -1490,16 +1517,52 @@ class RoomConnectionManager:
                 event_name = "force_reconnect"
             elif command_type == "SEND_SYSTEM_NOTIFICATION":
                 event_name = "system_notification"
-            elif command_type in {"KICK_PARTICIPANT", "MUTE_PARTICIPANT", "UNMUTE_PARTICIPANT"}:
+            elif command_type in {"KICK_PARTICIPANT", "MUTE_PARTICIPANT", "UNMUTE_PARTICIPANT", "PROMOTE_USER", "TRANSFER_HOST", "SUSPEND_USER", "REMOVE_USER"}:
+                if command_type == "SUSPEND_USER":
+                    try:
+                        db = get_db()
+                        uid = target_user_id or (target.user_id if target else None)
+                        if uid:
+                            await db["users"].update_one({"_id": ObjectId(uid)}, {"$set": {"is_disabled": True}})
+                    except Exception as e:
+                        logger.error(f"Error suspending user in DB: {e}")
+                    
+                    targets = [target] if target else [
+                        session for session in self.sessions.values() if session.user_id == target_user_id
+                    ]
+                    for s in targets:
+                        self._enqueue(s, self._admin_event_payload("force_logout", s.room_id, command, {"reason": "Account suspended"}), event="force_logout")
+                    return self._ack(command, "SUCCESS", f"User suspended and kicked from all active sessions.")
+
                 if not target or target.room_id != room.room_id:
                     return self._ack(command, "NOT_CONNECTED", "Target participant is not connected to this room.")
-                event_name = {
-                    "KICK_PARTICIPANT": "participant_kicked",
-                    "MUTE_PARTICIPANT": "participant_muted",
-                    "UNMUTE_PARTICIPANT": "participant_unmuted",
-                }[command_type]
-                self._enqueue(target, self._admin_event_payload(event_name, room.room_id, command, payload), event=event_name)
-                return self._ack(command, "SUCCESS", f"{event_name} delivered to {target.username}.")
+
+                if command_type in {"KICK_PARTICIPANT", "MUTE_PARTICIPANT", "UNMUTE_PARTICIPANT"}:
+                    event_name = {
+                        "KICK_PARTICIPANT": "participant_kicked",
+                        "MUTE_PARTICIPANT": "participant_muted",
+                        "UNMUTE_PARTICIPANT": "participant_unmuted",
+                    }[command_type]
+                    self._enqueue(target, self._admin_event_payload(event_name, room.room_id, command, payload), event=event_name)
+                    return self._ack(command, "SUCCESS", f"{event_name} delivered to {target.username}.")
+
+                elif command_type == "PROMOTE_USER":
+                    target.role = payload.get("role", "co-host")
+                    await self.broadcast_presence(room.room_id)
+                    return self._ack(command, "SUCCESS", f"User promoted to {target.role}.")
+
+                elif command_type == "TRANSFER_HOST":
+                    current_host = room.sessions.get(room.meeting_host_session_id or "")
+                    if current_host:
+                        current_host.role = "participant"
+                    target.role = "host"
+                    room.meeting_host_session_id = target.session_id
+                    await self.broadcast_presence(room.room_id)
+                    return self._ack(command, "SUCCESS", f"Host transferred to {target.username}.")
+
+                elif command_type == "REMOVE_USER":
+                    self._enqueue(target, self._admin_event_payload("participant_kicked", room.room_id, command, payload), event="participant_kicked")
+                    return self._ack(command, "SUCCESS", f"User removed from room.")
             else:
                 return self._ack(command, "FAILED", f"Unsupported admin command: {command_type}")
 
@@ -1685,6 +1748,13 @@ class RoomConnectionManager:
                 role=session.role,
                 pronouns=session.pronouns,
                 voice_preference=session.voice_preference,
+                is_muted=session.is_muted,
+                is_camera_off=session.is_camera_off,
+                is_speaking=session.is_speaking,
+                is_translating=session.is_translating,
+                is_listening=session.is_listening,
+                is_generating_speech=session.is_generating_speech,
+                hand_raised=session.hand_raised,
             )
             for session in sorted(room.sessions.values(), key=lambda item: item.username)
         ]

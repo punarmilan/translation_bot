@@ -153,4 +153,8 @@ export async function updateMedia(mediaId, body) {
   return (await api.patch(`/api/admin/media/${mediaId}`, body)).data;
 }
 
+export async function getMeetingParticipants(roomId) {
+  return (await api.get(`/api/admin/meetings/${encodeURIComponent(roomId)}/participants`)).data;
+}
+
 export default api;
