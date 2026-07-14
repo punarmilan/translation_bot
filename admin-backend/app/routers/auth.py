@@ -1,5 +1,6 @@
+import asyncio
 import hmac
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
@@ -23,6 +24,34 @@ from app.security import (
     token_fingerprint,
     verify_password,
 )
+
+
+class LoginRateLimiter:
+    def __init__(self, limit: int = 5, window_minutes: int = 15) -> None:
+        self.limit = limit
+        self.window = timedelta(minutes=window_minutes)
+        self._failed_attempts: dict[str, list[datetime]] = {}
+        self._lock = asyncio.Lock()
+
+    async def check_rate_limit(self, identifier: str) -> bool:
+        async with self._lock:
+            now = datetime.now(timezone.utc)
+            attempts = self._failed_attempts.get(identifier, [])
+            attempts = [a for a in attempts if now - a < self.window]
+            self._failed_attempts[identifier] = attempts
+            return len(attempts) < self.limit
+
+    async def record_failure(self, identifier: str) -> None:
+        async with self._lock:
+            now = datetime.now(timezone.utc)
+            self._failed_attempts.setdefault(identifier, []).append(now)
+
+    async def reset(self, identifier: str) -> None:
+        async with self._lock:
+            self._failed_attempts.pop(identifier, None)
+
+login_rate_limiter = LoginRateLimiter()
+
 
 router = APIRouter(prefix="/api/admin/auth", tags=["admin-auth"])
 
@@ -163,15 +192,24 @@ async def create_invitation(
 
 @router.post("/login")
 async def login(body: LoginRequest, request: Request, response: Response) -> dict:
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    if not await login_rate_limiter.check_rate_limit(client_ip):
+        raise HTTPException(status_code=429, detail="Too many failed login attempts. Please try again after 15 minutes.")
+
     db = get_db()
     user = await db["users"].find_one({"email": body.email})
     password_hash = user.get("password_hash") if user else None
     if not user or not password_hash or not verify_password(body.password, password_hash):
+        await login_rate_limiter.record_failure(client_ip)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
     if user.get("role") != "admin":
+        await login_rate_limiter.record_failure(client_ip)
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     if user.get("is_disabled") or user.get("deleted_at"):
+        await login_rate_limiter.record_failure(client_ip)
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is disabled")
+
+    await login_rate_limiter.reset(client_ip)
 
     refresh_token, refresh_claims = create_admin_token(user, "refresh")
     access_token, _ = create_admin_token(user, "access", refresh_claims["sid"])
@@ -186,6 +224,7 @@ async def login(body: LoginRequest, request: Request, response: Response) -> dic
     await AuditRepository(db).record(str(user["_id"]), "admin.login", "admin_session", refresh_claims["sid"])
     set_auth_cookies(response, access_token, refresh_token)
     return {"admin": public_admin(user), "expires_in": get_settings().ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES * 60}
+
 
 
 @router.post("/refresh")

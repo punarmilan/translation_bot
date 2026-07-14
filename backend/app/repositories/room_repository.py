@@ -11,11 +11,12 @@ class RoomRepository:
     async def create_indexes(self) -> None:
         await self.collection.create_index("room_id", unique=True)
 
-    async def create(self, room_id: str, room_name: str, host_id: str) -> dict:
+    async def create(self, room_id: str, room_name: str, host_id: str, translation_mode: str = "General") -> dict:
         doc = {
             "room_id": room_id,
             "room_name": room_name or room_id,
             "host_id": host_id,
+            "translation_mode": translation_mode,
             "participants": [],
             "participant_count": 0,
             "languages": [],
@@ -39,7 +40,7 @@ class RoomRepository:
     async def find_by_room_id(self, room_id: str) -> Optional[dict]:
         return await self.collection.find_one({"room_id": room_id})
 
-    async def upsert(self, room_id: str, room_name: str, host_id: str) -> dict:
+    async def upsert(self, room_id: str, room_name: str, host_id: str, translation_mode: str = "General") -> dict:
         existing = await self.find_by_room_id(room_id)
         if existing:
             # If room exists but was ended, reactivate it
@@ -52,7 +53,8 @@ class RoomRepository:
                 existing["ended_at"] = None
                 existing["duration"] = None
             return existing
-        return await self.create(room_id, room_name, host_id)
+        return await self.create(room_id, room_name, host_id, translation_mode)
+
 
     async def add_participant(
         self,
@@ -150,4 +152,11 @@ class RoomRepository:
                     }
                 }
             )
+
+    async def update_translation_mode(self, room_id: str, mode: str) -> None:
+        await self.collection.update_one(
+            {"room_id": room_id},
+            {"$set": {"translation_mode": mode}}
+        )
+
 

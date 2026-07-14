@@ -59,6 +59,13 @@ export default function ProfilePage() {
     pronouns: optionValueForPronouns(user?.pronouns),
     custom_pronouns: optionValueForPronouns(user?.pronouns) === "custom" ? user.pronouns : "",
     voice_preference: user?.voice_preference || "auto",
+    preferred_voice: user?.preferred_voice || "auto",
+    speech_speed: user?.speech_speed ?? 1.0,
+    pitch: user?.pitch ?? 1.0,
+    volume: user?.volume ?? 1.0,
+    gender_preference: user?.gender_preference || "neutral",
+    preferred_output_language: user?.preferred_output_language || "en",
+    emotion_profile: user?.emotion_profile || "neutral",
   }));
 
   useEffect(() => {
@@ -69,8 +76,16 @@ export default function ProfilePage() {
       pronouns: pronounValue,
       custom_pronouns: pronounValue === "custom" ? user.pronouns : "",
       voice_preference: user.voice_preference || "auto",
+      preferred_voice: user.preferred_voice || "auto",
+      speech_speed: user.speech_speed ?? 1.0,
+      pitch: user.pitch ?? 1.0,
+      volume: user.volume ?? 1.0,
+      gender_preference: user.gender_preference || "neutral",
+      preferred_output_language: user.preferred_output_language || "en",
+      emotion_profile: user.emotion_profile || "neutral",
     });
   }, [user]);
+
 
   if (loading) {
     return (
@@ -99,6 +114,13 @@ export default function ProfilePage() {
         preferred_language: form.preferred_language,
         pronouns: form.pronouns === "custom" ? form.custom_pronouns : form.pronouns,
         voice_preference: form.voice_preference,
+        preferred_voice: form.preferred_voice,
+        speech_speed: parseFloat(form.speech_speed),
+        pitch: parseFloat(form.pitch),
+        volume: parseFloat(form.volume),
+        gender_preference: form.gender_preference,
+        preferred_output_language: form.preferred_output_language,
+        emotion_profile: form.emotion_profile,
       });
       setStatus("Profile updated.");
     } catch (err) {
@@ -190,6 +212,131 @@ export default function ProfilePage() {
                 </option>
               ))}
             </select>
+          </label>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4 mb-4">
+          <label className="block">
+            <span className="text-sm font-medium text-brand-bg/70 block mb-1.5">
+              Preferred Voice Model
+            </span>
+            <select
+              name="preferred_voice"
+              value={form.preferred_voice}
+              onChange={handleChange}
+              className="ui-input text-sm"
+            >
+              <option value="auto">Auto Model</option>
+              <option value="en-neutral">English Neutral (Piper)</option>
+              <option value="hi-neutral">Hindi Neutral (Piper)</option>
+              <option value="fr-neutral">French Neutral (Piper)</option>
+              <option value="es-neutral">Spanish Neutral (Piper)</option>
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="text-sm font-medium text-brand-bg/70 block mb-1.5">
+              Preferred Output Language
+            </span>
+            <select
+              name="preferred_output_language"
+              value={form.preferred_output_language}
+              onChange={handleChange}
+              className="ui-input text-sm"
+            >
+              {languages.map((language) => (
+                <option key={language.value} value={language.value}>
+                  {language.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4 mb-4">
+          <label className="block">
+            <span className="text-sm font-medium text-brand-bg/70 block mb-1.5">
+              Gender Voice Preference
+            </span>
+            <select
+              name="gender_preference"
+              value={form.gender_preference}
+              onChange={handleChange}
+              className="ui-input text-sm"
+            >
+              <option value="neutral">Neutral Voice</option>
+              <option value="feminine">Feminine Voice</option>
+              <option value="masculine">Masculine Voice</option>
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="text-sm font-medium text-brand-bg/70 block mb-1.5">
+              Emotion Profile
+            </span>
+            <select
+              name="emotion_profile"
+              value={form.emotion_profile}
+              onChange={handleChange}
+              className="ui-input text-sm"
+            >
+              <option value="neutral">Neutral (Default)</option>
+              <option value="excited">Excited (Future placeholder)</option>
+              <option value="serious">Serious (Future placeholder)</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="space-y-4 mb-6 border-t border-white/[0.06] pt-4">
+          <label className="block">
+            <div className="flex justify-between text-sm font-medium text-brand-bg/70 mb-1.5">
+              <span>Speech Speed</span>
+              <span>{form.speech_speed}x</span>
+            </div>
+            <input
+              type="range"
+              name="speech_speed"
+              min="0.5"
+              max="2.0"
+              step="0.1"
+              value={form.speech_speed}
+              onChange={handleChange}
+              className="w-full accent-brand-accent bg-white/[0.08] h-1.5 rounded-lg appearance-none cursor-pointer"
+            />
+          </label>
+
+          <label className="block">
+            <div className="flex justify-between text-sm font-medium text-brand-bg/70 mb-1.5">
+              <span>Voice Pitch</span>
+              <span>{form.pitch}x</span>
+            </div>
+            <input
+              type="range"
+              name="pitch"
+              min="0.5"
+              max="2.0"
+              step="0.1"
+              value={form.pitch}
+              onChange={handleChange}
+              className="w-full accent-brand-accent bg-white/[0.08] h-1.5 rounded-lg appearance-none cursor-pointer"
+            />
+          </label>
+
+          <label className="block">
+            <div className="flex justify-between text-sm font-medium text-brand-bg/70 mb-1.5">
+              <span>TTS Volume</span>
+              <span>{Math.round(form.volume * 100)}%</span>
+            </div>
+            <input
+              type="range"
+              name="volume"
+              min="0.0"
+              max="1.0"
+              step="0.05"
+              value={form.volume}
+              onChange={handleChange}
+              className="w-full accent-brand-accent bg-white/[0.08] h-1.5 rounded-lg appearance-none cursor-pointer"
+            />
           </label>
         </div>
 

@@ -20,7 +20,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 def create_access_token(user_id: str, username: str, role: str) -> str:
     settings = get_settings()
     expire = datetime.now(timezone.utc) + timedelta(
-        minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
+        minutes=15  # Enforce 15-minute access token limit
     )
     payload = {
         "sub": user_id,
@@ -33,14 +33,31 @@ def create_access_token(user_id: str, username: str, role: str) -> str:
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
 
-def decode_token(token: str) -> Optional[dict]:
+def create_refresh_token(user_id: str, username: str, role: str) -> str:
+    settings = get_settings()
+    expire = datetime.now(timezone.utc) + timedelta(
+        days=7  # Refresh tokens expire in 7 days
+    )
+    payload = {
+        "sub": user_id,
+        "username": username,
+        "role": role,
+        "type": "user",
+        "token_use": "refresh",
+        "exp": expire,
+    }
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+
+
+def decode_token(token: str, expected_use: str = "access") -> Optional[dict]:
     settings = get_settings()
     try:
         payload = jwt.decode(
             token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM]
         )
-        if payload.get("type") != "user" or payload.get("token_use") != "access":
+        if payload.get("type") != "user" or payload.get("token_use") != expected_use:
             return None
         return payload
     except jwt.InvalidTokenError:
         return None
+

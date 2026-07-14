@@ -96,6 +96,13 @@ class UserRepository:
         pronouns: str | None,
         voice_preference: str,
         gender: str = "neutral",
+        preferred_voice: str = "auto",
+        speech_speed: float = 1.0,
+        pitch: float = 1.0,
+        volume: float = 1.0,
+        gender_preference: str = "neutral",
+        preferred_output_language: str = "en",
+        emotion_profile: str = "neutral",
     ) -> Optional[dict]:
         normalized_language = preferred_language.lower().strip()
         normalized_voice = voice_preference.lower().strip()
@@ -115,10 +122,18 @@ class UserRepository:
                     "pronouns": normalize_optional(pronouns),
                     "voice_preference": normalized_voice,
                     "gender": normalized_gender,
+                    "preferred_voice": preferred_voice,
+                    "speech_speed": speech_speed,
+                    "pitch": pitch,
+                    "volume": volume,
+                    "gender_preference": gender_preference,
+                    "preferred_output_language": preferred_output_language,
+                    "emotion_profile": emotion_profile,
                 }
             },
         )
         return await self.get_by_id(user_id)
+
 
     async def profile_distributions(self) -> dict:
         language_rows = await self.collection.aggregate(

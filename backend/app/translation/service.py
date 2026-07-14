@@ -5,6 +5,7 @@ import os
 import re
 from collections import OrderedDict
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Protocol
 
 import httpx
@@ -78,6 +79,8 @@ class TranslationContext:
     speaker_pronouns: str | None = None
     speaker_voice_preference: str | None = None
     speaker_session_id: str | None = None
+    translation_mode: str = "General"
+    conversation_context: list[dict] | None = None
 
 
 class TranslationProvider(Protocol):
@@ -90,47 +93,77 @@ class TranslationProvider(Protocol):
 
 
 class TranslationCache:
-    def __init__(self, max_size: int) -> None:
+    def __init__(self, max_size: int, ttl_seconds: float = 3600.0) -> None:
         self.max_size = max_size
-        self._items: OrderedDict[tuple[str, str, str, str], str] = OrderedDict()
+        self.ttl_seconds = ttl_seconds
+        # Key: (source_language, target_language, text, translation_mode)
+        self._items: OrderedDict[tuple[str, str, str, str], tuple[str, datetime]] = OrderedDict()
+        self.hits = 0
+        self.misses = 0
 
     def get(
         self,
-        provider_name: str,
-        text: str,
         source_lang: str,
         target_lang: str,
+        text: str,
+        translation_mode: str = "General",
     ) -> str | None:
-        key = self._key(provider_name, text, source_lang, target_lang)
-        value = self._items.get(key)
-        if value is None:
+        self.cleanup_expired()
+        key = self._key(source_lang, target_lang, text, translation_mode)
+        item = self._items.get(key)
+        if item is None:
+            self.misses += 1
+            return None
+        translated_text, timestamp = item
+        if (datetime.now(timezone.utc) - timestamp).total_seconds() > self.ttl_seconds:
+            del self._items[key]
+            self.misses += 1
             return None
         self._items.move_to_end(key)
-        return value
+        self.hits += 1
+        return translated_text
 
     def set(
         self,
-        provider_name: str,
-        text: str,
         source_lang: str,
         target_lang: str,
+        text: str,
+        translation_mode: str,
         translated_text: str,
     ) -> None:
-        key = self._key(provider_name, text, source_lang, target_lang)
-        self._items[key] = translated_text
+        self.cleanup_expired()
+        key = self._key(source_lang, target_lang, text, translation_mode)
+        self._items[key] = (translated_text, datetime.now(timezone.utc))
         self._items.move_to_end(key)
 
         while len(self._items) > self.max_size:
             self._items.popitem(last=False)
 
+    def cleanup_expired(self) -> None:
+        now = datetime.now(timezone.utc)
+        expired_keys = [
+            k for k, v in self._items.items()
+            if (now - v[1]).total_seconds() > self.ttl_seconds
+        ]
+        for k in expired_keys:
+            del self._items[k]
+
+    @property
+    def hit_ratio(self) -> float:
+        total = self.hits + self.misses
+        if total == 0:
+            return 0.0
+        return round(self.hits / total, 4)
+
     @staticmethod
     def _key(
-        provider_name: str,
-        text: str,
         source_lang: str,
         target_lang: str,
+        text: str,
+        translation_mode: str,
     ) -> tuple[str, str, str, str]:
-        return (provider_name, text.strip(), source_lang, target_lang)
+        return (source_lang.lower().strip(), target_lang.lower().strip(), text.strip(), translation_mode.lower().strip())
+
 
 
 class LibreTranslateProvider:
@@ -197,6 +230,27 @@ class TranslationService:
     ) -> None:
         self.provider = provider or LibreTranslateProvider()
         self.cache = cache or TranslationCache(max_size=CACHE_MAX_SIZE)
+        self._glossary_cache = {}
+        self._glossary_cache_time = {}
+
+    async def _load_glossary(self, db, target_lang: str) -> list[dict]:
+        now = datetime.utcnow()
+        cache_key = target_lang.lower().strip()
+        cached = self._glossary_cache.get(cache_key)
+        cached_time = self._glossary_cache_time.get(cache_key)
+        
+        if cached is not None and cached_time and (now - cached_time).total_seconds() < 60:
+            return cached
+            
+        from app.repositories.glossary_repository import GlossaryRepository
+        repo = GlossaryRepository(db)
+        entries = await repo.get_active_glossary_for_lang(target_lang)
+        entries.sort(key=lambda x: len(x.get("source_term", "")), reverse=True)
+        
+        self._glossary_cache[cache_key] = entries
+        self._glossary_cache_time[cache_key] = now
+        return entries
+
 
     async def translate_text(
         self,
@@ -225,7 +279,8 @@ class TranslationService:
             log_translation_event("translation.skipped", result=result)
             return result
 
-        cached = self.cache.get(self.provider.name, text, api_source, target)
+        mode = context.translation_mode if context else "General"
+        cached = self.cache.get(api_source, target, text, translation_mode=mode)
         if cached is not None:
             result = TranslationResult(
                 original=text,
@@ -238,6 +293,24 @@ class TranslationService:
             )
             log_translation_event("translation.cache_hit", result=result)
             return result
+
+        # Structured context formatting
+        formatted_text = text
+        has_context = False
+        if context and context.conversation_context:
+            context_lines = []
+            for item in context.conversation_context:
+                speaker = item.get("speaker", "Unknown")
+                orig = item.get("original", "").strip()
+                trans = item.get("translated", "").strip()
+                if orig:
+                    if trans:
+                        context_lines.append(f"{speaker}: {orig} -> {trans}")
+                    else:
+                        context_lines.append(f"{speaker}: {orig}")
+            if context_lines:
+                has_context = True
+                formatted_text = f"[Mode: {mode}]\n" + "\n".join(context_lines) + "\n---\n" + text
 
         log_translation_event(
             "translation.request",
@@ -252,7 +325,18 @@ class TranslationService:
         )
 
         try:
-            translated_text = await self.provider.translate(text, api_source, target)
+            raw_translation = await self.provider.translate(formatted_text, api_source, target)
+            translated_text = raw_translation
+            if has_context:
+                # Extract translated target sentence after the separator
+                if "---" in raw_translation:
+                    parts = raw_translation.split("---")
+                    translated_text = parts[-1].strip()
+                else:
+                    # Fallback check for newline-separated last line if separator got translated or lost
+                    lines = [line.strip() for line in raw_translation.split("\n") if line.strip()]
+                    if lines:
+                        translated_text = lines[-1]
         except (httpx.HTTPError, ValueError, TranslationProviderError) as exc:
             fallback = fallback_translation(text, source, target) or text
             result = TranslationResult(
@@ -267,7 +351,23 @@ class TranslationService:
             log_translation_event("translation.failure", result=result)
             return result
 
-        self.cache.set(self.provider.name, text, api_source, target, translated_text)
+        # Enforce glossary replacements
+        from app.database import get_db
+        try:
+            db = get_db()
+            glossary_entries = await self._load_glossary(db, target)
+            if glossary_entries:
+                for entry in glossary_entries:
+                    src_term = entry.get("source_term", "")
+                    tgt_term = entry.get("target_term", "")
+                    case_sensitive = entry.get("case_sensitive", False)
+                    flags = 0 if case_sensitive else re.IGNORECASE
+                    pattern = re.compile(rf"\b{re.escape(src_term)}\b", flags)
+                    translated_text = pattern.sub(tgt_term, translated_text)
+        except Exception as e:
+            logger.warning(f"Error applying glossary to translation: {e}")
+
+        self.cache.set(api_source, target, text, mode, translated_text)
         result = TranslationResult(
             original=text,
             translated=translated_text,
@@ -278,6 +378,7 @@ class TranslationService:
         )
         log_translation_event("translation.success", result=result)
         return result
+
 
 
 translation_service = TranslationService()

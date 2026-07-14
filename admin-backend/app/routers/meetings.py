@@ -93,6 +93,23 @@ async def list_meetings(
     return {"items": [serialize(room) for room in meetings], "total": total, "page": page, "page_size": page_size}
 
 
+@router.get("/recordings/all")
+async def all_recordings(
+    _: Annotated[dict, Depends(require_permission("meetings.read"))],
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+) -> dict:
+    db = get_db()
+    total = await db["recordings"].count_documents({})
+    rows = await db["recordings"].find({}, {"_id": 0}).sort("started_at", -1).skip((page - 1) * page_size).limit(page_size).to_list(length=page_size)
+    for row in rows:
+        if isinstance(row.get("started_at"), datetime):
+            row["started_at"] = row["started_at"].isoformat()
+        if isinstance(row.get("stopped_at"), datetime):
+            row["stopped_at"] = row["stopped_at"].isoformat()
+    return {"items": json_value(rows), "total": total, "page": page, "page_size": page_size}
+
+
 @router.post("/{room_id}/end", status_code=202)
 async def end_meeting(room_id: str, admin: Annotated[dict, Depends(require_permission("meetings.write"))]) -> dict:
     return await issue_meeting_command(
@@ -211,3 +228,35 @@ async def meeting_participants(room_id: str, _: Annotated[dict, Depends(require_
                 "country": p.get("country", "")
             })
     return {"items": active}
+
+
+@router.get("/{room_id}/recordings")
+async def meeting_recordings(
+    room_id: str,
+    _: Annotated[dict, Depends(require_permission("meetings.read"))],
+) -> dict:
+    db = get_db()
+    rows = await db["recordings"].find({"room_id": room_id}, {"_id": 0}).sort("started_at", -1).to_list(length=100)
+    for row in rows:
+        if isinstance(row.get("started_at"), datetime):
+            row["started_at"] = row["started_at"].isoformat()
+        if isinstance(row.get("stopped_at"), datetime):
+            row["stopped_at"] = row["stopped_at"].isoformat()
+    return {"room_id": room_id, "items": json_value(rows)}
+
+
+@router.get("/{room_id}/summary")
+async def meeting_summary(
+    room_id: str,
+    _: Annotated[dict, Depends(require_permission("meetings.read"))],
+) -> dict:
+    db = get_db()
+    summary = await db["meeting_summaries"].find_one({"room_id": room_id})
+    if not summary:
+        raise HTTPException(status_code=404, detail="No summary available for this meeting room yet.")
+    summary["_id"] = str(summary["_id"])
+    if isinstance(summary.get("generated_at"), datetime):
+        summary["generated_at"] = summary["generated_at"].isoformat()
+    return {"summary": serialize(summary)}
+
+

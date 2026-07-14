@@ -15,7 +15,8 @@ from app.repositories.invitation_repository import AdminInvitationRepository
 from app.repositories.platform_repository import PlatformRepository
 from app.repositories.session_repository import AdminSessionRepository
 from app.repositories.user_repository import AdminUserRepository
-from app.routers import auth, dashboard, media, meetings, platform, system, users
+from app.routers import auth, dashboard, media, meetings, platform, system, users, enterprise
+
 
 
 @asynccontextmanager
@@ -43,14 +44,15 @@ class AdminOriginMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         if request.url.path.startswith("/api/admin") and request.method not in {"GET", "HEAD", "OPTIONS"}:
             origin = request.headers.get("origin")
-            if origin and origin not in get_settings().frontend_origins:
-                return JSONResponse({"detail": "Untrusted admin origin"}, status_code=403)
+            if not origin or origin not in get_settings().frontend_origins:
+                return JSONResponse({"detail": "Untrusted or missing admin origin"}, status_code=403)
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Cache-Control"] = "no-store"
         return response
+
 
 
 app.add_middleware(AdminOriginMiddleware)
@@ -69,6 +71,8 @@ app.include_router(platform.router)
 app.include_router(platform.public_router)
 app.include_router(media.router)
 app.include_router(system.router)
+app.include_router(enterprise.router)
+
 
 media_root = Path(get_settings().MEDIA_ROOT).resolve()
 media_root.mkdir(parents=True, exist_ok=True)

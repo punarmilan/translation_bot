@@ -2,6 +2,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 
 from app.auth.router import router as auth_router
 from app.config import get_settings
@@ -13,6 +15,7 @@ from app.repositories.user_repository import UserRepository
 from app.routes import manager as websocket_manager
 from app.routes import router as websocket_router
 from app.control_consumer import ControlConsumer
+
 
 
 @asynccontextmanager
@@ -39,12 +42,22 @@ async def lifespan(app: FastAPI):
     await disconnect_db()
 
 
+class StrictOriginMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        if request.url.path.startswith("/api") and request.method not in {"GET", "HEAD", "OPTIONS"}:
+            origin = request.headers.get("origin")
+            if not origin or origin not in get_settings().frontend_origins:
+                return JSONResponse({"detail": "Untrusted or missing Origin header"}, status_code=403)
+        return await call_next(request)
+
+
 app = FastAPI(
     title="Realtime Multilingual Chat",
     description="Production-ready multilingual communication platform",
     lifespan=lifespan,
 )
 
+app.add_middleware(StrictOriginMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_settings().frontend_origins,

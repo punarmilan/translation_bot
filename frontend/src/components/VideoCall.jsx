@@ -23,6 +23,14 @@ export default function VideoCall({
   muteRemoteAudio = false,
   translationStatuses = {},
   videoCallingEnabled = true,
+  meetingLayout = "gallery",
+  activeScreenSharer = null,
+  sessionId = "",
+  socket = null,
+  roomId = "",
+  isPinned = false,
+  onTogglePin = () => {},
+  onToggleLayout = () => {},
 }) {
   const callTone = inCall ? "green" : callActive ? "yellow" : "neutral";
   const callLabel = inCall
@@ -75,6 +83,14 @@ export default function VideoCall({
           members={members}
           muteRemoteAudio={muteRemoteAudio}
           translationStatuses={translationStatuses}
+          meetingLayout={meetingLayout}
+          activeScreenSharer={activeScreenSharer}
+          sessionId={sessionId}
+          socket={socket}
+          roomId={roomId}
+          isPinned={isPinned}
+          onTogglePin={onTogglePin}
+          onToggleLayout={onToggleLayout}
         />
       )}
     </section>

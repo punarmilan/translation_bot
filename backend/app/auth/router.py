@@ -1,15 +1,48 @@
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from pydantic import BaseModel, Field, field_validator
 from pymongo.errors import DuplicateKeyError
 
+
 from app.auth.dependencies import get_current_user
-from app.auth.service import create_access_token, hash_password, verify_password
+from app.auth.service import create_access_token, create_refresh_token, decode_token, hash_password, verify_password
 from app.database import get_db
 from app.repositories.user_repository import UserRepository
 
+
+import asyncio
+from datetime import datetime, timedelta, timezone
+
+class LoginRateLimiter:
+    def __init__(self, limit: int = 5, window_minutes: int = 15) -> None:
+        self.limit = limit
+        self.window = timedelta(minutes=window_minutes)
+        self._failed_attempts: dict[str, list[datetime]] = {}
+        self._lock = asyncio.Lock()
+
+    async def check_rate_limit(self, identifier: str) -> bool:
+        async with self._lock:
+            now = datetime.now(timezone.utc)
+            attempts = self._failed_attempts.get(identifier, [])
+            attempts = [a for a in attempts if now - a < self.window]
+            self._failed_attempts[identifier] = attempts
+            return len(attempts) < self.limit
+
+    async def record_failure(self, identifier: str) -> None:
+        async with self._lock:
+            now = datetime.now(timezone.utc)
+            self._failed_attempts.setdefault(identifier, []).append(now)
+
+    async def reset(self, identifier: str) -> None:
+        async with self._lock:
+            self._failed_attempts.pop(identifier, None)
+
+login_rate_limiter = LoginRateLimiter()
+
+
 router = APIRouter(prefix="/auth", tags=["auth"])
+
 
 VALID_ROLES = {"admin", "host", "participant"}
 PUBLIC_SIGNUP_ROLES = {"host", "participant"}
@@ -80,6 +113,7 @@ class LoginRequest(BaseModel):
 
 class AuthResponse(BaseModel):
     access_token: str
+    refresh_token: str | None = None
     token_type: str = "bearer"
     user_id: str
     name: str
@@ -90,6 +124,7 @@ class AuthResponse(BaseModel):
     pronouns: str | None = None
     voice_preference: VoicePreference = "auto"
     gender: GenderType = "neutral"
+
 
 
 class SignupResponse(BaseModel):
@@ -107,8 +142,15 @@ class SignupResponse(BaseModel):
 class ProfileUpdateRequest(BaseModel):
     preferred_language: str = "en"
     pronouns: str | None = Field(default=None, max_length=40)
-    voice_preference: VoicePreference = "auto"
-    gender: GenderType = "neutral"
+    voice_preference: str = "auto"
+    gender: str = "neutral"
+    preferred_voice: str = "auto"
+    speech_speed: float = Field(default=1.0, ge=0.5, le=2.0)
+    pitch: float = Field(default=1.0, ge=0.5, le=2.0)
+    volume: float = Field(default=1.0, ge=0.0, le=1.0)
+    gender_preference: str = "neutral"
+    preferred_output_language: str = "en"
+    emotion_profile: str = "neutral"
 
     @field_validator("preferred_language", "voice_preference", "gender")
     @classmethod
@@ -135,14 +177,24 @@ def public_user_for(user: dict) -> dict:
         "pronouns": user.get("pronouns"),
         "voice_preference": user.get("voice_preference", "auto"),
         "gender": user.get("gender", "neutral"),
+        "preferred_voice": user.get("preferred_voice", "auto"),
+        "speech_speed": user.get("speech_speed", 1.0),
+        "pitch": user.get("pitch", 1.0),
+        "volume": user.get("volume", 1.0),
+        "gender_preference": user.get("gender_preference", "neutral"),
+        "preferred_output_language": user.get("preferred_output_language", "en"),
+        "emotion_profile": user.get("emotion_profile", "neutral"),
     }
 
 
-def auth_response_for_user(user: dict, access_token: str) -> AuthResponse:
+
+def auth_response_for_user(user: dict, access_token: str, refresh_token: str | None = None) -> AuthResponse:
     return AuthResponse(
         access_token=access_token,
+        refresh_token=refresh_token,
         **public_user_for(user),
     )
+
 
 
 @router.post("/signup", response_model=SignupResponse, status_code=status.HTTP_201_CREATED)
@@ -188,22 +240,54 @@ async def signup(body: SignupRequest) -> SignupResponse:
 
 
 @router.post("/login", response_model=AuthResponse)
-async def login(body: LoginRequest) -> AuthResponse:
+async def login(body: LoginRequest, request: Request) -> AuthResponse:
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    if not await login_rate_limiter.check_rate_limit(client_ip):
+        raise HTTPException(status_code=429, detail="Too many failed login attempts. Please try again after 15 minutes.")
+
     db = get_db()
     repo = UserRepository(db)
 
     user = await repo.get_by_email(body.email)
     password_hash = user.get("password_hash") if user else None
     if not user or not password_hash or not verify_password(body.password, password_hash):
+        await login_rate_limiter.record_failure(client_ip)
         raise HTTPException(status_code=401, detail="Invalid email or password")
     if user.get("is_disabled") or user.get("deleted_at"):
+        await login_rate_limiter.record_failure(client_ip)
         raise HTTPException(status_code=403, detail="Account is disabled")
     if user.get("role") == "admin":
+        await login_rate_limiter.record_failure(client_ip)
         raise HTTPException(status_code=403, detail="Administrator accounts must use the admin portal")
 
-    token = create_access_token(str(user["_id"]), user["username"], user["role"])
+    await login_rate_limiter.reset(client_ip)
+
+    access_token = create_access_token(str(user["_id"]), user["username"], user["role"])
+    refresh_token = create_refresh_token(str(user["_id"]), user["username"], user["role"])
     await repo.update_last_seen(str(user["_id"]))
-    return auth_response_for_user(user, token)
+    return auth_response_for_user(user, access_token, refresh_token)
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+@router.post("/refresh", response_model=AuthResponse)
+async def refresh_token_route(body: RefreshRequest) -> AuthResponse:
+    payload = decode_token(body.refresh_token, expected_use="refresh")
+    if not payload or not payload.get("sub"):
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+
+    db = get_db()
+    repo = UserRepository(db)
+    user = await repo.find_by_id(payload["sub"])
+    if not user or user.get("is_disabled") or user.get("deleted_at"):
+        raise HTTPException(status_code=403, detail="User account is disabled or inactive")
+
+    access = create_access_token(str(user["_id"]), user["username"], user["role"])
+    refresh = create_refresh_token(str(user["_id"]), user["username"], user["role"])
+    return auth_response_for_user(user, access, refresh)
+
 
 
 @router.get("/me")
@@ -233,6 +317,13 @@ async def update_me(
         pronouns=body.pronouns,
         voice_preference=body.voice_preference,
         gender=body.gender,
+        preferred_voice=body.preferred_voice,
+        speech_speed=body.speech_speed,
+        pitch=body.pitch,
+        volume=body.volume,
+        gender_preference=body.gender_preference,
+        preferred_output_language=body.preferred_output_language,
+        emotion_profile=body.emotion_profile,
     )
     if not updated:
         raise HTTPException(status_code=404, detail="User not found")

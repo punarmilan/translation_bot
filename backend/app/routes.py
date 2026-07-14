@@ -5,11 +5,16 @@ import hmac
 import json
 import logging
 import time
-from typing import Optional
+from typing import (
+    Annotated,
+    Optional,
+    Any,
+    List,
+)
 
 from pydantic import ValidationError
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, UploadFile, File, Form, Response
 from pydantic import BaseModel, Field
 
 from app.auth.dependencies import get_current_user
@@ -175,6 +180,7 @@ async def websocket_room_chat(
     room_id: str,
     user_lang: str,
     token: Optional[str] = Query(default=None),
+    translation_mode: Optional[str] = Query(default="General"),
 ) -> None:
     await websocket.accept()
     registered = False
@@ -209,8 +215,10 @@ async def websocket_room_chat(
             role=authenticated_role,
             pronouns=current_user.get("pronouns"),
             voice_preference=current_user.get("voice_preference", "auto"),
+            translation_mode=translation_mode,
         )
         registered = True
+
 
         while True:
             try:
@@ -286,6 +294,42 @@ async def websocket_room_chat(
                     is_camera_off=raw_payload.get("is_camera_off"),
                     hand_raised=raw_payload.get("hand_raised"),
                 )
+                continue
+
+            if payload_type == "whiteboard_update":
+                if raw_payload.get("room_id") != room_id:
+                    continue
+                await manager.handle_whiteboard_update(websocket, raw_payload)
+                continue
+
+            if payload_type == "notes_update":
+                if raw_payload.get("room_id") != room_id:
+                    continue
+                await manager.handle_notes_update(websocket, raw_payload)
+                continue
+
+            if payload_type == "screen_share_update":
+                if raw_payload.get("room_id") != room_id:
+                    continue
+                await manager.handle_screen_share_update(websocket, raw_payload)
+                continue
+
+            if payload_type == "presentation_pointer":
+                if raw_payload.get("room_id") != room_id:
+                    continue
+                await manager.handle_presentation_pointer(websocket, raw_payload)
+                continue
+
+            if payload_type == "permissions_update":
+                if raw_payload.get("room_id") != room_id:
+                    continue
+                await manager.handle_permissions_update(websocket, raw_payload)
+                continue
+
+            if payload_type == "recording_update":
+                if raw_payload.get("room_id") != room_id:
+                    continue
+                await manager.handle_recording_update(websocket, raw_payload)
                 continue
 
             if payload_type in LANGUAGE_TYPES:
@@ -618,4 +662,333 @@ async def public_settings() -> dict:
     }
     values = runtime_settings.general_settings
     return {"values": {key: value for key, value in values.items() if key in public_keys}}
+
+
+@router.get("/api/public/translation-modes")
+async def public_translation_modes() -> dict:
+    db = get_db()
+    if await db["translation_modes"].count_documents({}) == 0:
+        defaults = [
+            {"name": "General", "description": "Standard translation settings for general conversation.", "enabled": True},
+            {"name": "Business", "description": "Optimized for corporate negotiations, meetings, and business terms.", "enabled": True},
+            {"name": "Education", "description": "Tailored for classroom learning, lectures, and academic terminology.", "enabled": True},
+            {"name": "Medical", "description": "Configured for healthcare providers, clinical settings, and patient interactions.", "enabled": True},
+            {"name": "Legal", "description": "Optimized for legal terms, courtroom proceedings, and client consultations.", "enabled": True},
+            {"name": "Technical", "description": "Tailored for engineering discussion, software development, and specialized terminology.", "enabled": True},
+            {"name": "Customer Support", "description": "Optimized for helpdesk queries, ticket resolutions, and user relations.", "enabled": True},
+            {"name": "Interview", "description": "Configured for job interviews, candidate assessments, and professional screenings.", "enabled": True},
+            {"name": "Conference", "description": "Designed for large-scale multi-speaker events and presentations.", "enabled": True},
+        ]
+        from datetime import datetime
+        for item in defaults:
+            item["preferred_terminology"] = {}
+            item["translation_prompt"] = f"Translate in a {item['name'].lower()} context."
+            item["glossary"] = {}
+            item["llm_config"] = {}
+            item["created_at"] = datetime.utcnow()
+            await db["translation_modes"].insert_one(item)
+            
+    rows = await db["translation_modes"].find({"enabled": {"$ne": False}}).sort("name", 1).to_list(length=100)
+    return {"items": [{"name": row["name"], "description": row.get("description", "")} for row in rows]}
+
+
+@router.get("/api/meetings/{room_id}/summary")
+async def get_meeting_summary(room_id: str) -> dict:
+    from app.intelligence.service import meeting_intelligence_engine
+    summary = await meeting_intelligence_engine.get_summary(room_id)
+    if not summary:
+        raise HTTPException(status_code=404, detail="No summary available for this meeting room yet.")
+    return {"summary": summary}
+
+
+@router.post("/api/meetings/{room_id}/summary/generate")
+async def generate_meeting_summary(room_id: str) -> dict:
+    from app.intelligence.service import meeting_intelligence_engine
+    summary = await meeting_intelligence_engine.generate_summary(room_id)
+    if not summary:
+        raise HTTPException(status_code=404, detail="Could not generate summary; no transcripts found.")
+    return {"status": "success", "summary": summary}
+
+
+@router.get("/api/search")
+async def perform_search(q: str, type: str = "keyword") -> dict:
+    from app.search.service import search_engine
+    if type == "meeting":
+        results = await search_engine.meeting_search(q)
+    elif type == "transcript":
+        results = await search_engine.transcript_search(q)
+    elif type == "summary":
+        results = await search_engine.summary_search(q)
+    else:
+        results = await search_engine.keyword_search(q)
+    return {"results": results}
+
+
+@router.get("/api/meetings/{room_id}/analytics")
+async def get_meeting_analytics(
+    room_id: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> dict:
+    db = get_db()
+    room = await db["rooms"].find_one({"room_id": room_id})
+    if not room:
+        raise HTTPException(status_code=404, detail="Meeting room not found")
+        
+    is_host = room.get("host_id") == str(current_user["_id"])
+    is_admin = current_user.get("role") == "admin"
+    
+    if not is_host and not is_admin:
+        raise HTTPException(status_code=403, detail="Access denied. Analytics are only visible to the meeting host or administrators.")
+        
+    created_at = room.get("created_at")
+    if created_at:
+        if room.get("is_active"):
+            duration = int((datetime.utcnow() - created_at).total_seconds())
+        else:
+            ended_at = room.get("ended_at") or datetime.utcnow()
+            duration = int((ended_at - created_at).total_seconds())
+    else:
+        duration = 0
+        
+    logs = await db["translation_logs"].find({"room_id": room_id}).to_list(length=5000)
+    
+    speaking_times = {}
+    msg_counts = {}
+    languages_used = set()
+    total_latency = 0
+    success_count = 0
+    
+    for log in logs:
+        speaker = log.get("speaker") or "Unknown"
+        speaking_times[speaker] = speaking_times.get(speaker, 0.0) + 3.0
+        msg_counts[speaker] = msg_counts.get(speaker, 0) + 1
+        
+        if log.get("source_language"):
+            languages_used.add(log["source_language"])
+        if log.get("target_language"):
+            languages_used.add(log["target_language"])
+            
+        latency = log.get("latency_ms", 0)
+        if latency:
+            total_latency += latency
+            success_count += 1
+            
+    total_speakers = len(speaking_times)
+    participation_pct = 100.0 if total_speakers > 0 else 0.0
+    avg_response_time = (total_latency / success_count) if success_count > 0 else 0.0
+    
+    return {
+        "room_id": room_id,
+        "duration_seconds": duration,
+        "participation_percentage": participation_pct,
+        "speaking_times": speaking_times,
+        "message_counts": msg_counts,
+        "languages_used": list(languages_used),
+        "translation_volume": len(logs),
+        "avg_response_time_ms": avg_response_time,
+    }
+
+
+@router.get("/api/meetings/{room_id}/export/{format}")
+async def export_meeting_documents(room_id: str, format: str) -> Response:
+    from app.exporter.service import meeting_exporter
+    try:
+        file_bytes, media_type, filename = await meeting_exporter.export_meeting(room_id, format)
+        return Response(
+            content=file_bytes,
+            media_type=media_type,
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}"
+            }
+        )
+    except ValueError as val_err:
+        raise HTTPException(status_code=400, detail=str(val_err))
+    except Exception as e:
+        logger.error(f"Error exporting meeting: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error during meeting log export")
+
+
+@router.get("/api/meetings/{room_id}/replay-timeline")
+async def get_meeting_replay_timeline(room_id: str) -> dict:
+    db = get_db()
+    messages = await db["messages"].find({"room_id": room_id}).sort("timestamp", 1).to_list(length=1000)
+    
+    timeline_events = []
+    
+    for m in messages:
+        ts = m.get("timestamp")
+        ts_iso = ts.isoformat() if isinstance(ts, datetime) else str(ts)
+        timeline_events.append({
+            "type": "transcript",
+            "timestamp": ts_iso,
+            "speaker": m.get("sender_name") or m.get("speaker") or "Unknown",
+            "data": {
+                "original_text": m.get("original_text", ""),
+                "translations": m.get("translations", {}),
+                "source_language": m.get("source_language", "en")
+            }
+        })
+        
+    recs = await db["recordings"].find({"room_id": room_id}).to_list(length=100)
+    for r in recs:
+        started = r.get("started_at")
+        if started:
+            started_iso = started.isoformat() if isinstance(started, datetime) else str(started)
+            timeline_events.append({
+                "type": "recording_start",
+                "timestamp": started_iso,
+                "speaker": r.get("host_username") or "Host",
+                "data": {"status": "recording"}
+            })
+        stopped = r.get("stopped_at")
+        if stopped:
+            stopped_iso = stopped.isoformat() if isinstance(stopped, datetime) else str(stopped)
+            timeline_events.append({
+                "type": "recording_stop",
+                "timestamp": stopped_iso,
+                "speaker": r.get("host_username") or "Host",
+                "data": {"status": "stopped"}
+            })
+
+    timeline_events.sort(key=lambda x: x["timestamp"])
+    
+    return {
+        "room_id": room_id,
+        "events": timeline_events
+    }
+
+
+@router.post("/api/meetings/{room_id}/files/upload")
+async def upload_meeting_file(
+    room_id: str,
+    file: UploadFile = File(...),
+    username: str = Form(...),
+):
+    import os
+    import uuid
+    import time
+    
+    db = get_db()
+    file_id = str(uuid.uuid4())
+    room_dir = os.path.join("uploads", room_id)
+    os.makedirs(room_dir, exist_ok=True)
+    file_path = os.path.join(room_dir, f"{file_id}_{file.filename}")
+    
+    with open(file_path, "wb") as f:
+        f.write(await file.read())
+        
+    file_meta = {
+        "file_id": file_id,
+        "room_id": room_id,
+        "filename": file.filename,
+        "content_type": file.content_type,
+        "size": os.path.getsize(file_path),
+        "uploaded_by": username,
+        "timestamp": time.time(),
+    }
+    await db["files"].insert_one(file_meta)
+    
+    async with manager._lock:
+        room = manager.rooms.get(room_id)
+        if room:
+            sessions = list(room.sessions.values())
+        else:
+            sessions = []
+            
+    broadcast_payload = {
+        "type": "file_uploaded",
+        "room_id": room_id,
+        "file": {
+            "file_id": file_id,
+            "filename": file.filename,
+            "content_type": file.content_type,
+            "size": file_meta["size"],
+            "uploaded_by": username,
+            "timestamp": file_meta["timestamp"],
+        }
+    }
+    for s in sessions:
+        if s.connected:
+            manager._enqueue(s, json.dumps(broadcast_payload), event="file_uploaded")
+            
+    return {"status": "ok", "file_id": file_id}
+
+
+@router.get("/api/meetings/{room_id}/files")
+async def list_meeting_files(room_id: str):
+    db = get_db()
+    cursor = db["files"].find({"room_id": room_id})
+    files = []
+    async for doc in cursor:
+        files.append({
+            "file_id": doc["file_id"],
+            "filename": doc["filename"],
+            "content_type": doc.get("content_type", ""),
+            "size": doc.get("size", 0),
+            "uploaded_by": doc.get("uploaded_by", ""),
+            "timestamp": doc.get("timestamp", 0),
+        })
+    return {"files": files}
+
+
+@router.get("/api/meetings/{room_id}/files/{file_id}/download")
+async def download_meeting_file(room_id: str, file_id: str):
+    import os
+    from fastapi.responses import FileResponse
+    
+    db = get_db()
+    meta = await db["files"].find_one({"room_id": room_id, "file_id": file_id})
+    if not meta:
+        raise HTTPException(status_code=404, detail="File not found")
+    file_path = os.path.join("uploads", room_id, f"{file_id}_{meta['filename']}")
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found on disk")
+        
+    return FileResponse(file_path, media_type=meta.get("content_type"), filename=meta["filename"])
+
+
+@router.delete("/api/meetings/{room_id}/files/{file_id}")
+async def delete_meeting_file(room_id: str, file_id: str, session_id: str = Query(...)):
+    import os
+    
+    async with manager._lock:
+        room = manager.rooms.get(room_id)
+        if not room:
+            raise HTTPException(status_code=404, detail="Room not active")
+        session = room.sessions.get(session_id)
+        is_authorized = session and session.role in {"host", "admin", "co-host"}
+        if not is_authorized:
+            raise HTTPException(status_code=403, detail="Only host or co-host can delete files")
+            
+    db = get_db()
+    meta = await db["files"].find_one({"room_id": room_id, "file_id": file_id})
+    if not meta:
+        raise HTTPException(status_code=404, detail="File not found")
+        
+    file_path = os.path.join("uploads", room_id, f"{file_id}_{meta['filename']}")
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+        except Exception:
+            pass
+            
+    await db["files"].delete_one({"room_id": room_id, "file_id": file_id})
+    
+    async with manager._lock:
+        room = manager.rooms.get(room_id)
+        if room:
+            sessions = list(room.sessions.values())
+        else:
+            sessions = []
+            
+    broadcast_payload = {
+        "type": "file_deleted",
+        "room_id": room_id,
+        "file_id": file_id,
+    }
+    for s in sessions:
+        if s.connected:
+            manager._enqueue(s, json.dumps(broadcast_payload), event="file_deleted")
+            
+    return {"status": "ok"}
 

@@ -631,3 +631,189 @@ async def get_voice_routing() -> dict:
     platform_repo = PlatformRepository(db)
     item = await platform_repo.get_by_key("platform_settings", "voice_routing")
     return {"routing": item.get("values", {}) if item else {}}
+
+
+class TranslationModeCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=100)
+    description: str | None = Field(default=None, max_length=500)
+    preferred_terminology: dict[str, str] = Field(default_factory=dict)
+    translation_prompt: str | None = Field(default=None, max_length=1000)
+    glossary: dict[str, str] = Field(default_factory=dict)
+    llm_config: dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = True
+
+
+class TranslationModeUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=100)
+    description: str | None = Field(default=None, max_length=500)
+    preferred_terminology: dict[str, str] | None = None
+    translation_prompt: str | None = Field(default=None, max_length=1000)
+    glossary: dict[str, str] | None = None
+    llm_config: dict[str, Any] | None = None
+    enabled: bool | None = None
+
+
+async def seed_translation_modes(db) -> None:
+    if await db["translation_modes"].count_documents({}) == 0:
+        defaults = [
+            {"name": "General", "description": "Standard translation settings for general conversation.", "enabled": True},
+            {"name": "Business", "description": "Optimized for corporate negotiations, meetings, and business terms.", "enabled": True},
+            {"name": "Education", "description": "Tailored for classroom learning, lectures, and academic terminology.", "enabled": True},
+            {"name": "Medical", "description": "Configured for healthcare providers, clinical settings, and patient interactions.", "enabled": True},
+            {"name": "Legal", "description": "Optimized for legal terms, courtroom proceedings, and client consultations.", "enabled": True},
+            {"name": "Technical", "description": "Tailored for engineering discussion, software development, and specialized terminology.", "enabled": True},
+            {"name": "Customer Support", "description": "Optimized for helpdesk queries, ticket resolutions, and user relations.", "enabled": True},
+            {"name": "Interview", "description": "Configured for job interviews, candidate assessments, and professional screenings.", "enabled": True},
+            {"name": "Conference", "description": "Designed for large-scale multi-speaker events and presentations.", "enabled": True},
+        ]
+        for item in defaults:
+            item["preferred_terminology"] = {}
+            item["translation_prompt"] = f"Translate in a {item['name'].lower()} context."
+            item["glossary"] = {}
+            item["llm_config"] = {}
+            item["created_at"] = datetime.utcnow()
+            await db["translation_modes"].insert_one(item)
+
+
+@router.get("/translation-modes")
+async def list_translation_modes(
+    _: Annotated[dict, Depends(require_permission("translation.read"))],
+) -> dict:
+    db = get_db()
+    await seed_translation_modes(db)
+    rows = await db["translation_modes"].find({}).sort("name", 1).to_list(length=100)
+    return {"items": [serialize(row) for row in rows]}
+
+
+@router.post("/translation-modes", status_code=201)
+async def create_translation_mode(
+    body: TranslationModeCreate,
+    admin: Annotated[dict, Depends(require_permission("translation.write"))],
+) -> dict:
+    db = get_db()
+    existing = await db["translation_modes"].find_one({"name": {"$regex": f"^{re.escape(body.name)}$", "$options": "i"}})
+    if existing:
+        raise HTTPException(status_code=409, detail="A translation mode with this name already exists")
+    
+    doc = body.model_dump()
+    doc["created_at"] = datetime.utcnow()
+    res = await db["translation_modes"].insert_one(doc)
+    doc["_id"] = res.inserted_id
+    
+    await AuditRepository(db).record(str(admin["_id"]), "translation_mode.create", "translation_mode", str(res.inserted_id), {"name": body.name})
+    return serialize(doc)
+
+
+@router.patch("/translation-modes/{mode_id}")
+async def update_translation_mode(
+    mode_id: str,
+    body: TranslationModeUpdate,
+    admin: Annotated[dict, Depends(require_permission("translation.write"))],
+) -> dict:
+    db = get_db()
+    try:
+        oid = ObjectId(mode_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid mode ID format")
+        
+    existing = await db["translation_modes"].find_one({"_id": oid})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Translation mode not found")
+        
+    updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if updates:
+        if "name" in updates:
+            dup = await db["translation_modes"].find_one({"name": {"$regex": f"^{re.escape(updates['name'])}$", "$options": "i"}, "_id": {"$ne": oid}})
+            if dup:
+                raise HTTPException(status_code=409, detail="A translation mode with this name already exists")
+        await db["translation_modes"].update_one({"_id": oid}, {"$set": updates})
+        existing.update(updates)
+        
+    await AuditRepository(db).record(str(admin["_id"]), "translation_mode.update", "translation_mode", mode_id, updates)
+    return serialize(existing)
+
+
+@router.delete("/translation-modes/{mode_id}", status_code=204)
+async def delete_translation_mode(
+    mode_id: str,
+    admin: Annotated[dict, Depends(require_permission("translation.write"))],
+) -> None:
+    db = get_db()
+    try:
+        oid = ObjectId(mode_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid mode ID format")
+        
+    res = await db["translation_modes"].delete_one({"_id": oid})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Translation mode not found")
+        
+    await AuditRepository(db).record(str(admin["_id"]), "translation_mode.delete", "translation_mode", mode_id)
+
+
+@public_router.get("/translation-modes")
+async def get_public_modes() -> dict:
+    db = get_db()
+    await seed_translation_modes(db)
+    rows = await db["translation_modes"].find({"enabled": {"$ne": False}}).sort("name", 1).to_list(length=100)
+    return {"items": [{"name": row["name"], "description": row.get("description", "")} for row in rows]}
+
+
+class GlossaryEntrySchema(BaseModel):
+    source_term: str = Field(..., min_length=1)
+    target_term: str = Field(..., min_length=1)
+    language: str = Field(..., min_length=2, max_length=10)
+    industry: str = "General"
+    priority: int = 1
+    case_sensitive: bool = False
+    notes: str | None = None
+    enabled: bool = True
+
+
+@router.get("/platform/glossary")
+async def get_admin_glossary(
+    admin: Annotated[dict, Depends(require_permission("platform.read"))],
+) -> dict:
+    from app.repositories.glossary_repository import GlossaryRepository
+    db = get_db()
+    repo = GlossaryRepository(db)
+    items = await repo.list_all()
+    return {"items": items}
+
+
+@router.post("/platform/glossary")
+async def save_admin_glossary(
+    entry: GlossaryEntrySchema,
+    admin: Annotated[dict, Depends(require_permission("platform.write"))],
+) -> dict:
+    from app.repositories.glossary_repository import GlossaryRepository
+    db = get_db()
+    repo = GlossaryRepository(db)
+    doc = await repo.save(
+        source_term=entry.source_term,
+        target_term=entry.target_term,
+        language=entry.language,
+        industry=entry.industry,
+        priority=entry.priority,
+        case_sensitive=entry.case_sensitive,
+        notes=entry.notes,
+        enabled=entry.enabled,
+    )
+    await AuditRepository(db).record(str(admin["_id"]), "glossary.save", "glossary", doc["_id"])
+    return {"status": "success", "item": doc}
+
+
+@router.delete("/platform/glossary/{entry_id}")
+async def delete_admin_glossary(
+    entry_id: str,
+    admin: Annotated[dict, Depends(require_permission("platform.write"))],
+) -> None:
+    from app.repositories.glossary_repository import GlossaryRepository
+    db = get_db()
+    repo = GlossaryRepository(db)
+    success = await repo.delete(entry_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Glossary entry not found or invalid format")
+    await AuditRepository(db).record(str(admin["_id"]), "glossary.delete", "glossary", entry_id)
+
+

@@ -119,6 +119,23 @@ class RoomState:
     locked: bool = False
     chat_enabled: bool = True
     translation_enabled: bool = True
+    whiteboard_shapes: list[dict] = field(default_factory=list)
+    notes_content: str = ""
+    host_permissions: dict = field(default_factory=lambda: {
+        "allow_share": True,
+        "allow_whiteboard": True,
+        "allow_files": True,
+        "allow_notes": True,
+        "allow_annotations": True,
+    })
+    active_screen_sharer_session_id: str | None = None
+    recording_status: dict = field(default_factory=lambda: {
+        "status": "stopped",
+        "timestamp": None
+    })
+    translation_mode: str = "General"
+    conversation_context: list[dict] = field(default_factory=list)
+
 
 
 class RoomConnectionManager:
@@ -141,6 +158,7 @@ class RoomConnectionManager:
         role: str = "participant",
         pronouns: str | None = None,
         voice_preference: str = "auto",
+        translation_mode: str = "General",
     ) -> str:
         session = ClientSession(
             session_id=str(uuid4()),
@@ -167,7 +185,7 @@ class RoomConnectionManager:
         country = ip_to_country(client_ip, preferred_language)
 
         room_repo = RoomRepository(db)
-        await room_repo.upsert(room_id, room_name=room_id, host_id=user_id or "")
+        await room_repo.upsert(room_id, room_name=room_id, host_id=user_id or "", translation_mode=translation_mode)
         await room_repo.add_participant(
             room_id=room_id,
             user_id=user_id or "",
@@ -197,13 +215,21 @@ class RoomConnectionManager:
                 logger.error(f"Error setting user presence online: {e}")
 
         async with self._lock:
-            room = self.rooms.setdefault(room_id, RoomState(room_id=room_id))
+            room = self.rooms.setdefault(room_id, RoomState(room_id=room_id, translation_mode=translation_mode))
+            # Keep translation_mode up-to-date
+            if translation_mode and translation_mode != "General":
+                room.translation_mode = translation_mode
+
             is_new_room = len(room.sessions) == 0
             if is_new_room:
                 session.role = "host"
                 room.meeting_host_session_id = session.session_id
+                asyncio.create_task(self._periodic_summary_loop(room_id))
+                from app.integrations.webhooks import webhook_manager
+                asyncio.create_task(webhook_manager.dispatch_event("meeting.started", {"room_id": room_id}))
             else:
                 session.role = "participant"
+
 
             room.sessions[session.session_id] = session
             self.sessions[session.session_id] = session
@@ -224,7 +250,9 @@ class RoomConnectionManager:
                 "locked": room.locked,
                 "chat_enabled": room.chat_enabled,
                 "translation_enabled": room.translation_enabled,
+                "translation_mode": room.translation_mode,
             }
+
 
         self._log_transport_event(
             "connect",
@@ -272,6 +300,7 @@ class RoomConnectionManager:
             ),
             event="room_policy",
         )
+        await self.send_collaboration_state(session, room_id)
         await self.broadcast_system(room_id, f"{username} joined the room")
         await self.broadcast_presence(room_id)
         return session.session_id
@@ -330,8 +359,13 @@ class RoomConnectionManager:
                 if not room.sessions:
                     self.rooms.pop(room_id, None)
                     await room_repo.end_meeting(room_id)
+                    from app.intelligence.service import meeting_intelligence_engine
+                    asyncio.create_task(meeting_intelligence_engine.generate_summary(room_id))
+                    from app.integrations.webhooks import webhook_manager
+                    asyncio.create_task(webhook_manager.dispatch_event("meeting.ended", {"room_id": room_id}))
                     stats = RoomStats(
                         room_id=room_id,
+
                         active_users=0,
                         message_count=room.message_count,
                         language_distribution={},
@@ -394,6 +428,30 @@ class RoomConnectionManager:
                 room_stats=stats,
             )
             await self.broadcast_presence(room_id)
+
+    async def _periodic_summary_loop(self, room_id: str) -> None:
+        from app.intelligence.service import meeting_intelligence_engine
+        while True:
+            await asyncio.sleep(300)  # every 5 minutes
+            async with self._lock:
+                room = self.rooms.get(room_id)
+                if not room or not room.sessions:
+                    break
+            try:
+                await meeting_intelligence_engine.generate_summary(room_id)
+                broadcast_payload = json.dumps({
+                    "type": "summary_update",
+                    "room_id": room_id,
+                    "timestamp": utc_timestamp(),
+                })
+                async with self._lock:
+                    room = self.rooms.get(room_id)
+                    if room:
+                        for session in room.sessions.values():
+                            if session.connected:
+                                self._enqueue(session, broadcast_payload, event="summary_update")
+            except Exception as e:
+                logger.error(f"Error in periodic summary loop for room {room_id}: {e}")
 
     async def broadcast_chat(
         self,
@@ -663,6 +721,272 @@ class RoomConnectionManager:
         await self.broadcast_presence(room_id)
         return True
 
+    async def send_collaboration_state(self, session: ClientSession, room_id: str) -> None:
+        async with self._lock:
+            room = self.rooms.get(room_id)
+            if not room:
+                return
+            state_payload = {
+                "type": "sync_collaboration_state",
+                "room_id": room_id,
+                "whiteboard_shapes": getattr(room, "whiteboard_shapes", []),
+                "notes_content": getattr(room, "notes_content", ""),
+                "host_permissions": getattr(room, "host_permissions", {
+                    "allow_share": True,
+                    "allow_whiteboard": True,
+                    "allow_files": True,
+                    "allow_notes": True,
+                    "allow_annotations": True,
+                }),
+                "active_screen_sharer_session_id": getattr(room, "active_screen_sharer_session_id", None),
+                "recording_status": getattr(room, "recording_status", {"status": "stopped", "timestamp": None}),
+                "timestamp": utc_timestamp(),
+            }
+        self._enqueue(session, json.dumps(state_payload), event="sync_collaboration_state")
+
+    async def handle_whiteboard_update(self, websocket: WebSocket, payload: dict) -> None:
+        room_id = payload.get("room_id")
+        shapes = payload.get("whiteboard_shapes")
+        action = payload.get("action")
+        async with self._lock:
+            room = self.rooms.get(room_id)
+            if not room:
+                return
+            session_id = self.sessions_by_socket.get(websocket)
+            session = self.sessions.get(session_id) if session_id else None
+            if session and session.role not in {"host", "admin", "co-host"}:
+                permissions = getattr(room, "host_permissions", {})
+                if not permissions.get("allow_whiteboard", True):
+                    return
+            if action == "clear":
+                room.whiteboard_shapes = []
+            elif shapes is not None:
+                room.whiteboard_shapes = shapes
+            sessions = list(room.sessions.values())
+        broadcast_payload = {
+            "type": "whiteboard_update",
+            "room_id": room_id,
+            "whiteboard_shapes": room.whiteboard_shapes,
+            "action": action,
+            "sender_session_id": session_id,
+            "timestamp": utc_timestamp(),
+        }
+        for s in sessions:
+            if s.connected and s.session_id != session_id:
+                self._enqueue(s, json.dumps(broadcast_payload), event="whiteboard_update")
+
+    async def handle_notes_update(self, websocket: WebSocket, payload: dict) -> None:
+        room_id = payload.get("room_id")
+        content = payload.get("notes_content")
+        async with self._lock:
+            room = self.rooms.get(room_id)
+            if not room:
+                return
+            session_id = self.sessions_by_socket.get(websocket)
+            session = self.sessions.get(session_id) if session_id else None
+            if session and session.role not in {"host", "admin", "co-host"}:
+                permissions = getattr(room, "host_permissions", {})
+                if not permissions.get("allow_notes", True):
+                    return
+            if content is not None:
+                room.notes_content = content
+            sessions = list(room.sessions.values())
+        broadcast_payload = {
+            "type": "notes_update",
+            "room_id": room_id,
+            "notes_content": room.notes_content,
+            "sender_session_id": session_id,
+            "timestamp": utc_timestamp(),
+        }
+        for s in sessions:
+            if s.connected and s.session_id != session_id:
+                self._enqueue(s, json.dumps(broadcast_payload), event="notes_update")
+
+    async def handle_screen_share_update(self, websocket: WebSocket, payload: dict) -> None:
+        room_id = payload.get("room_id")
+        active = payload.get("active")
+        async with self._lock:
+            room = self.rooms.get(room_id)
+            if not room:
+                return
+            session_id = self.sessions_by_socket.get(websocket)
+            session = self.sessions.get(session_id) if session_id else None
+            if session and session.role not in {"host", "admin", "co-host"}:
+                permissions = getattr(room, "host_permissions", {})
+                if not permissions.get("allow_share", True) and active:
+                    return
+            if active:
+                room.active_screen_sharer_session_id = session_id
+            else:
+                if room.active_screen_sharer_session_id == session_id:
+                    room.active_screen_sharer_session_id = None
+            sessions = list(room.sessions.values())
+        broadcast_payload = {
+            "type": "screen_share_update",
+            "room_id": room_id,
+            "active": active,
+            "active_screen_sharer_session_id": room.active_screen_sharer_session_id,
+            "sender_session_id": session_id,
+            "sender_name": session.username if session else "Someone",
+            "timestamp": utc_timestamp(),
+        }
+        for s in sessions:
+            if s.connected:
+                self._enqueue(s, json.dumps(broadcast_payload), event="screen_share_update")
+
+    async def handle_presentation_pointer(self, websocket: WebSocket, payload: dict) -> None:
+        room_id = payload.get("room_id")
+        async with self._lock:
+            room = self.rooms.get(room_id)
+            if not room:
+                return
+            session_id = self.sessions_by_socket.get(websocket)
+            sessions = list(room.sessions.values())
+        broadcast_payload = {
+            "type": "presentation_pointer",
+            "room_id": room_id,
+            "x": payload.get("x"),
+            "y": payload.get("y"),
+            "pointer_type": payload.get("pointer_type"),
+            "color": payload.get("color"),
+            "sender_session_id": session_id,
+            "timestamp": utc_timestamp(),
+        }
+        for s in sessions:
+            if s.connected and s.session_id != session_id:
+                self._enqueue(s, json.dumps(broadcast_payload), event="presentation_pointer")
+
+    async def handle_permissions_update(self, websocket: WebSocket, payload: dict) -> None:
+        room_id = payload.get("room_id")
+        permissions = payload.get("host_permissions")
+        async with self._lock:
+            room = self.rooms.get(room_id)
+            if not room:
+                return
+            session_id = self.sessions_by_socket.get(websocket)
+            session = self.sessions.get(session_id) if session_id else None
+            if not session or session.role not in {"host", "admin", "co-host"}:
+                return
+            if permissions is not None:
+                room.host_permissions.update(permissions)
+            sessions = list(room.sessions.values())
+        broadcast_payload = {
+            "type": "permissions_update",
+            "room_id": room_id,
+            "host_permissions": room.host_permissions,
+            "timestamp": utc_timestamp(),
+        }
+        for s in sessions:
+            if s.connected:
+                self._enqueue(s, json.dumps(broadcast_payload), event="permissions_update")
+
+    async def handle_recording_update(self, websocket: WebSocket, payload: dict) -> None:
+        room_id = payload.get("room_id")
+        status = payload.get("status")
+        reason = payload.get("reason", "Stopped by owner")
+        async with self._lock:
+            room = self.rooms.get(room_id)
+            if not room:
+                return
+            session_id = self.sessions_by_socket.get(websocket)
+            session = self.sessions.get(session_id) if session_id else None
+            if not session or session.role not in {"host", "admin", "co-host"}:
+                return
+            
+            prev_status = room.recording_status.get("status", "stopped")
+            room.recording_status = {
+                "status": status,
+                "timestamp": utc_timestamp() if status == "recording" else room.recording_status.get("timestamp")
+            }
+            sessions = list(room.sessions.values())
+
+        # DB Logging for Recording Metadata
+        try:
+            db = get_db()
+            now = datetime.utcnow()
+            if status == "recording":
+                if prev_status == "paused":
+                    # Resume
+                    active_rec = await db["recordings"].find_one({"room_id": room_id, "status": "paused"})
+                    if active_rec:
+                        events = active_rec.get("events", [])
+                        events.append({"event": "resume", "timestamp": now.isoformat(), "by": session.username})
+                        await db["recordings"].update_one(
+                            {"_id": active_rec["_id"]},
+                            {"$set": {"status": "recording", "events": events}}
+                        )
+                else:
+                    # New Start
+                    participants_list = [s.username for s in sessions]
+                    languages_list = list(set(normalize_language(s.preferred_language) for s in sessions))
+                    doc = {
+                        "room_id": room_id,
+                        "host_username": session.username,
+                        "host_user_id": session.user_id,
+                        "status": "recording",
+                        "started_at": now,
+                        "stopped_at": None,
+                        "duration_seconds": 0.0,
+                        "participants": participants_list,
+                        "languages": languages_list,
+                        "events": [{"event": "start", "timestamp": now.isoformat(), "by": session.username}],
+                        "reason_stopped": None
+                    }
+                    await db["recordings"].insert_one(doc)
+            elif status == "paused":
+                active_rec = await db["recordings"].find_one({"room_id": room_id, "status": "recording"})
+                if active_rec:
+                    events = active_rec.get("events", [])
+                    events.append({"event": "pause", "timestamp": now.isoformat(), "by": session.username})
+                    await db["recordings"].update_one(
+                        {"_id": active_rec["_id"]},
+                        {"$set": {"status": "paused", "events": events}}
+                    )
+            elif status == "stopped":
+                active_rec = await db["recordings"].find_one({"room_id": room_id, "status": {"$in": ["recording", "paused"]}})
+                if active_rec:
+                    events = active_rec.get("events", [])
+                    events.append({"event": "stop", "timestamp": now.isoformat(), "by": session.username})
+                    
+                    # Calculate duration
+                    total_dur = 0.0
+                    last_start = None
+                    for ev in events:
+                        evt = ev.get("event")
+                        ts_str = ev.get("timestamp")
+                        ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00")).replace(tzinfo=None)
+                        if evt in ["start", "resume"]:
+                            last_start = ts
+                        elif evt in ["pause", "stop"] and last_start:
+                            total_dur += (ts - last_start).total_seconds()
+                            last_start = None
+                            
+                    await db["recordings"].update_one(
+                        {"_id": active_rec["_id"]},
+                        {
+                            "$set": {
+                                "status": "stopped",
+                                "stopped_at": now,
+                                "duration_seconds": round(total_dur, 2),
+                                "reason_stopped": reason,
+                                "events": events
+                            }
+                        }
+                    )
+        except Exception as e:
+            logger.error(f"Error persisting recording metadata event: {e}")
+
+        broadcast_payload = {
+            "type": "recording_update",
+            "room_id": room_id,
+            "recording_status": room.recording_status,
+            "timestamp": utc_timestamp(),
+        }
+        for s in sessions:
+            if s.connected:
+                self._enqueue(s, json.dumps(broadcast_payload), event="recording_update")
+
+
     async def process_voice_chunk(
         self,
         sender_socket: WebSocket,
@@ -897,6 +1221,19 @@ class RoomConnectionManager:
                 language_hint=stt_result.language or sender.preferred_language,
             )
             source_language = normalize_language(detection.language)
+            
+            async with self._lock:
+                room.conversation_context.append({
+                    "speaker": sender.username,
+                    "timestamp": utc_timestamp(),
+                    "source_lang": source_language,
+                    "original": transcript,
+                    "translated": ""
+                })
+                if len(room.conversation_context) > 10:
+                    room.conversation_context.pop(0)
+                current_context_list = list(room.conversation_context[:-1])
+
             for receiver in recipients:
                 self._send_translation_status(
                     receiver,
@@ -952,8 +1289,14 @@ class RoomConnectionManager:
                                 speaker_pronouns=sender.pronouns,
                                 speaker_voice_preference=sender.voice_preference,
                                 speaker_session_id=sender.session_id,
+                                translation_mode=room.translation_mode,
+                                conversation_context=current_context_list,
                             ),
                         )
+                        if result.status == "success" and result.translated:
+                            async with self._lock:
+                                if room.conversation_context and room.conversation_context[-1]["original"] == transcript:
+                                    room.conversation_context[-1]["translated"] = result.translated
                 except Exception as exc:
                     result = TranslationResult(
                         original=transcript,
@@ -965,6 +1308,7 @@ class RoomConnectionManager:
                     )
 
                 translation_latency = int((perf_counter() - translation_started) * 1000)
+
 
                 # 2. Send translation status & transcript
                 for receiver in receivers:
@@ -997,8 +1341,10 @@ class RoomConnectionManager:
                             total_latency_ms=total_latency_ms,
                             translation_status=result.status,
                             translation_error=result.error,
+                            confidence=getattr(stt_result, "confidence", 0.95),
                         )
                         self._enqueue(receiver, payload.model_dump_json(), event="voice_transcript")
+
 
                 # 3. Deliver TTS Audio if needed
                 audio_receivers = [
@@ -1460,6 +1806,35 @@ class RoomConnectionManager:
                 await stt_service.update_model(new_model)
                 
             return self._ack(command, "SUCCESS", f"Settings updated for {key} category.")
+
+        if command_type == "UPDATE_TRANSLATION_MODE":
+            async with self._lock:
+                room = self.rooms.get(room_id)
+                if room:
+                    mode = payload.get("translation_mode", "General")
+                    room.translation_mode = mode
+                    
+                    try:
+                        db = get_db()
+                        room_repo = RoomRepository(db)
+                        await room_repo.update_translation_mode(room_id, mode)
+                    except Exception as e:
+                        logger.error(f"Error persisting translation mode: {e}")
+                        
+                    broadcast_payload = json.dumps({
+                        "type": "room_policy",
+                        "room_id": room_id,
+                        "locked": room.locked,
+                        "chat_enabled": room.chat_enabled,
+                        "translation_enabled": room.translation_enabled,
+                        "translation_mode": room.translation_mode,
+                        "timestamp": utc_timestamp(),
+                    })
+                    for session in room.sessions.values():
+                        if session.connected:
+                            self._enqueue(session, broadcast_payload, event="room_policy")
+                    return self._ack(command, "SUCCESS", f"Translation mode updated to {mode} for room {room_id}.")
+            return self._ack(command, "FAILED", f"Room {room_id} not found.")
 
         async with self._lock:
             room = self.rooms.get(room_id) if room_id else None

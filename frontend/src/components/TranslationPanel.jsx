@@ -1,3 +1,4 @@
+import { useState, useMemo } from "react";
 import { Copy } from "lucide-react";
 import TranslatedAudioPlayer from "./TranslatedAudioPlayer";
 import Panel from "./ui/Panel";
@@ -40,10 +41,21 @@ export default function TranslationPanel({
   onPlaybackStateChange,
   disabled = false,
 }) {
+  const [speakerFilter, setSpeakerFilter] = useState("all");
   const audioEnabled =
     listenerMode === "translated_audio_only" ||
     listenerMode === "original_translated_audio";
   const activeIndex = activePipelineIndex(status, ttsStatus);
+
+  const uniqueSpeakers = useMemo(() => {
+    const speakers = new Set(transcripts.map(t => t.sender).filter(Boolean));
+    return Array.from(speakers);
+  }, [transcripts]);
+
+  const filteredTranscripts = useMemo(() => {
+    return transcripts.filter(t => speakerFilter === "all" || t.sender === speakerFilter);
+  }, [transcripts, speakerFilter]);
+
 
   return (
     <Panel
@@ -129,23 +141,54 @@ export default function TranslationPanel({
       />
 
       <div className="mt-5 border-t border-white/[0.06] pt-4">
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-brand-bg">Recent captions</h3>
-          <span className="text-xs text-ui-subtle">{transcripts.length}</span>
+        <div className="mb-3 border-b border-white/[0.04] pb-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-brand-bg">Recent captions</h3>
+            <span className="text-xs text-ui-subtle">{filteredTranscripts.length}</span>
+          </div>
+          {uniqueSpeakers.length > 0 && (
+            <label className="block">
+              <span className="mb-1 block text-[10px] uppercase font-bold text-ui-subtle tracking-wider">Filter by Speaker</span>
+              <select
+                value={speakerFilter}
+                onChange={(e) => setSpeakerFilter(e.target.value)}
+                className="w-full bg-ui-secondary text-brand-bg/85 text-xs rounded border border-white/[0.06] p-1.5 focus:outline-none focus:border-brand-accent transition"
+              >
+                <option value="all">All Speakers</option>
+                {uniqueSpeakers.map((sp) => (
+                  <option key={sp} value={sp}>{sp}</option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
         <div className="meeting-scroll max-h-80 space-y-3 overflow-y-auto pr-1">
-          {transcripts.length === 0 ? (
+          {filteredTranscripts.length === 0 ? (
             <div className="rounded-control bg-ui-secondary px-3 py-4 text-center text-xs leading-5 text-ui-subtle">
-              Captions appear after someone speaks in the meeting.
+              No matching captions found.
             </div>
           ) : (
-            transcripts.map((item) => (
+            filteredTranscripts.map((item) => (
               <article key={item.id} className="rounded-control bg-ui-secondary p-3.5 border border-white/[0.04] space-y-3">
                 <div className="flex items-center justify-between gap-2 border-b border-white/[0.04] pb-2">
-                  <p className="truncate text-xs font-semibold text-brand-bg">{item.sender}</p>
-                  <span className="text-[10px] bg-brand-accent/15 text-brand-accent px-1.5 py-0.5 rounded font-mono font-bold">
-                    {item.total_latency_ms ? `${item.total_latency_ms}ms` : "-"}
-                  </span>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <p className="truncate text-xs font-semibold text-brand-bg">{item.sender}</p>
+                    {item.timestamp && (
+                      <span className="text-[9px] text-ui-subtle font-mono">
+                        {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {item.confidence !== undefined && (
+                      <span className="text-[9px] bg-ui-elevated text-ui-muted px-1.5 py-0.5 rounded font-mono">
+                        VAD: {Math.round(item.confidence * 100)}%
+                      </span>
+                    )}
+                    <span className="text-[10px] bg-brand-accent/15 text-brand-accent px-1.5 py-0.5 rounded font-mono font-bold">
+                      {item.total_latency_ms ? `${item.total_latency_ms}ms` : "-"}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="text-xs space-y-2.5">

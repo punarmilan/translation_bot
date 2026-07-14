@@ -278,6 +278,7 @@ class TranslatedTranscriptMessage(BaseModel):
     total_latency_ms: int
     translation_status: str
     translation_error: str | None = None
+    confidence: float = 0.95
 
     @classmethod
     def create(
@@ -296,6 +297,7 @@ class TranslatedTranscriptMessage(BaseModel):
         total_latency_ms: int,
         translation_status: str,
         translation_error: str | None = None,
+        confidence: float = 0.95,
     ) -> "TranslatedTranscriptMessage":
         return cls(
             room_id=room_id,
@@ -313,7 +315,9 @@ class TranslatedTranscriptMessage(BaseModel):
             total_latency_ms=total_latency_ms,
             translation_status=translation_status,
             translation_error=translation_error,
+            confidence=confidence,
         )
+
 
 
 class TranslationAudioMessage(BaseModel):

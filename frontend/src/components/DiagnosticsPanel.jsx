@@ -8,6 +8,17 @@ export default function DiagnosticsPanel({
   remoteStreams,
   peerDiagnostics,
   transcripts = [],
+  vadPreset,
+  setVadPreset,
+  customVadThreshold,
+  setCustomVadThreshold,
+  customSilenceMs,
+  setCustomSilenceMs,
+  adaptiveSilence,
+  setAdaptiveSilence,
+  developerMode,
+  setDeveloperMode,
+  userRole = "participant",
 }) {
   const [open, setOpen] = useState(true);
   const localAudio = localStream?.getAudioTracks?.() || [];
@@ -62,12 +73,14 @@ export default function DiagnosticsPanel({
               tone={websocketTone}
               showIndicator
             />
-            <DiagnosticItem
-              label="Reconnects"
-              value={diagnostics.reconnectAttempts || 0}
-              tone={diagnostics.reconnectAttempts > 0 ? "red" : "green"}
-              showIndicator
-            />
+            {userRole === "admin" && (
+              <DiagnosticItem
+                label="Reconnects"
+                value={diagnostics.reconnectAttempts || 0}
+                tone={diagnostics.reconnectAttempts > 0 ? "red" : "green"}
+                showIndicator
+              />
+            )}
             <DiagnosticItem
               label="Last Event"
               value={diagnostics.lastEvent || "None"}
@@ -125,32 +138,118 @@ export default function DiagnosticsPanel({
             />
           </MetricGroup>
 
-          <MetricGroup title="Pipeline Latency (Last Segment)">
-            <DiagnosticItem
-              label="STT (Whisper)"
-              value={sttLatency ? `${sttLatency} ms` : "-"}
-              tone={getLatencyTone(sttLatency)}
-              showIndicator
-            />
-            <DiagnosticItem
-              label="Translate (Libre)"
-              value={translationLatency ? `${translationLatency} ms` : "-"}
-              tone={getLatencyTone(translationLatency)}
-              showIndicator
-            />
-            <DiagnosticItem
-              label="TTS (Piper)"
-              value={ttsLatency ? `${ttsLatency} ms` : "-"}
-              tone={getLatencyTone(ttsLatency)}
-              showIndicator
-            />
-            <DiagnosticItem
-              label="End-to-End"
-              value={totalLatency ? `${totalLatency} ms` : "-"}
-              tone={getLatencyTone(totalLatency)}
-              showIndicator
-            />
-          </MetricGroup>
+          {userRole === "admin" && (
+            <MetricGroup title="Pipeline Latency (Last Segment)">
+              <DiagnosticItem
+                label="STT (Whisper)"
+                value={sttLatency ? `${sttLatency} ms` : "-"}
+                tone={getLatencyTone(sttLatency)}
+                showIndicator
+              />
+              <DiagnosticItem
+                label="Translate (Libre)"
+                value={translationLatency ? `${translationLatency} ms` : "-"}
+                tone={getLatencyTone(translationLatency)}
+                showIndicator
+              />
+              <DiagnosticItem
+                label="TTS (Piper)"
+                value={ttsLatency ? `${ttsLatency} ms` : "-"}
+                tone={getLatencyTone(ttsLatency)}
+                showIndicator
+              />
+              <DiagnosticItem
+                label="End-to-End"
+                value={totalLatency ? `${totalLatency} ms` : "-"}
+                tone={getLatencyTone(totalLatency)}
+                showIndicator
+              />
+            </MetricGroup>
+          )}
+
+          <div className="border border-white/[0.04] bg-white/[0.01] p-3 rounded-lg space-y-3">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-brand-bg/30">
+              Audio Latency Settings
+            </p>
+            <div className="space-y-2">
+              <label className="block">
+                <span className="text-[10px] text-ui-muted font-medium mb-1 block">Audio Profile Preset</span>
+                <select
+                  value={vadPreset || "Office"}
+                  onChange={(e) => setVadPreset(e.target.value)}
+                  className="w-full bg-ui-secondary text-brand-bg/80 text-xs rounded border border-white/[0.06] p-1.5 focus:outline-none"
+                >
+                  <option value="Quiet Room">Quiet Room</option>
+                  <option value="Office">Office (Default)</option>
+                  <option value="Classroom">Classroom</option>
+                  <option value="Noisy Environment">Noisy Environment</option>
+                  <option value="Custom">Custom (Developer Mode)</option>
+                </select>
+              </label>
+
+              <label className="flex items-center gap-2 cursor-pointer pt-1">
+                <input
+                  type="checkbox"
+                  checked={developerMode || false}
+                  onChange={(e) => setDeveloperMode(e.target.checked)}
+                  className="rounded border-white/[0.1] bg-ui-secondary text-brand-accent focus:ring-0 w-3 h-3"
+                />
+                <span className="text-[10px] text-ui-muted font-medium select-none">Developer Mode</span>
+              </label>
+
+              {(developerMode || vadPreset === "Custom") && (
+                <div className="pt-2 border-t border-white/[0.04] space-y-3">
+                  <label className="block">
+                    <div className="flex justify-between text-[9px] text-ui-muted mb-1">
+                      <span>VAD RMS Threshold</span>
+                      <span>{customVadThreshold}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.002"
+                      max="0.08"
+                      step="0.002"
+                      value={customVadThreshold || 0.012}
+                      onChange={(e) => {
+                        setCustomVadThreshold(parseFloat(e.target.value));
+                        setVadPreset("Custom");
+                      }}
+                      className="w-full h-1 bg-ui-secondary rounded-lg appearance-none cursor-pointer accent-brand-accent"
+                    />
+                  </label>
+
+                  <label className="block">
+                    <div className="flex justify-between text-[9px] text-ui-muted mb-1">
+                      <span>Silence Timeout</span>
+                      <span>{customSilenceMs} ms</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="100"
+                      max="3000"
+                      step="50"
+                      value={customSilenceMs || 600}
+                      onChange={(e) => {
+                        setCustomSilenceMs(parseInt(e.target.value, 10));
+                        setVadPreset("Custom");
+                      }}
+                      className="w-full h-1 bg-ui-secondary rounded-lg appearance-none cursor-pointer accent-brand-accent"
+                    />
+                  </label>
+
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={adaptiveSilence || false}
+                      onChange={(e) => setAdaptiveSilence(e.target.checked)}
+                      className="rounded border-white/[0.1] bg-ui-secondary text-brand-accent focus:ring-0 w-3 h-3"
+                    />
+                    <span className="text-[9px] text-ui-muted font-medium select-none">Adaptive Silence Detection</span>
+                  </label>
+                </div>
+              )}
+            </div>
+          </div>
 
           <div>
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-brand-bg/35">

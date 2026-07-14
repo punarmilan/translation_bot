@@ -11,13 +11,20 @@ import {
   Users,
   MessageSquare,
   Languages,
+  Captions,
   Activity,
   LogOut,
-  Settings
+  Settings,
+  FileText,
+  FolderOpen,
+  StickyNote
 } from "lucide-react";
 import DiagnosticsPanel from "../components/DiagnosticsPanel";
 import TranslationPanel from "../components/TranslationPanel";
 import VideoCall from "../components/VideoCall";
+import WhiteboardPanel from "../components/WhiteboardPanel";
+import NotesPanel from "../components/NotesPanel";
+import FilesPanel from "../components/FilesPanel";
 import { useAuth } from "../contexts/AuthContext";
 import {
   getIceServers,
@@ -548,7 +555,28 @@ export default function ChatPage() {
   const [userRole, setUserRole] = useState("participant");
   const [selectedRecipient, setSelectedRecipient] = useState("all");
   const [meetingPanel, setMeetingPanel] = useState("chat");
+  const [whiteboardShapes, setWhiteboardShapes] = useState([]);
+  const [notesContent, setNotesContent] = useState("");
+  const [hostPermissions, setHostPermissions] = useState({
+    allow_share: true,
+    allow_whiteboard: true,
+    allow_files: true,
+    allow_notes: true,
+    allow_annotations: true,
+  });
+  const [activeScreenSharer, setActiveScreenSharer] = useState(null);
+  const [recordingStatus, setRecordingStatus] = useState({ status: "stopped", timestamp: null });
+  const [meetingLayout, setMeetingLayout] = useState("gallery");
+  const [isPinned, setIsPinned] = useState(false);
+  const [screenStream, setScreenStream] = useState(null);
+  const [developerMode, setDeveloperMode] = useState(false);
+  const [vadPreset, setVadPreset] = useState("Office");
+  const [customVadThreshold, setCustomVadThreshold] = useState(0.012);
+  const [customSilenceMs, setCustomSilenceMs] = useState(600);
+  const [adaptiveSilence, setAdaptiveSilence] = useState(true);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [callActive, setCallActive] = useState(false);
+
   const [callHostId, setCallHostId] = useState(null);
   const [inCall, setInCall] = useState(false);
   const [isVideoCall, setIsVideoCall] = useState(false);
@@ -561,6 +589,56 @@ export default function ChatPage() {
   const [ttsStatus, setTtsStatus] = useState("");
   const [playingTranscriptId, setPlayingTranscriptId] = useState(null);
   const [transcripts, setTranscripts] = useState([]);
+  const [activeCaption, setActiveCaption] = useState(null);
+  const [captionSettings, setCaptionSettings] = useState(() => {
+    try {
+      const saved = localStorage.getItem("captionSettings");
+      return saved ? JSON.parse(saved) : {
+        position: "bottom",
+        fontSize: "16px",
+        bgOpacity: 0.7,
+        maxWidth: "600px",
+        delay: 0,
+        theme: "dark",
+        showCaptions: true,
+        captionMode: "translated",
+      };
+    } catch {
+      return {
+        position: "bottom",
+        fontSize: "16px",
+        bgOpacity: 0.7,
+        maxWidth: "600px",
+        delay: 0,
+        theme: "dark",
+        showCaptions: true,
+        captionMode: "translated",
+      };
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem("captionSettings", JSON.stringify(captionSettings));
+  }, [captionSettings]);
+
+  const [showCaptionSettings, setShowCaptionSettings] = useState(false);
+
+  useEffect(() => {
+    if (transcripts.length === 0) {
+      setActiveCaption(null);
+      return;
+    }
+    const latest = transcripts[0];
+    if (captionSettings.delay > 0) {
+      const t = setTimeout(() => {
+        setActiveCaption(latest);
+      }, captionSettings.delay);
+      return () => clearTimeout(t);
+    } else {
+      setActiveCaption(latest);
+    }
+  }, [transcripts, captionSettings.delay]);
+
   const [translatedAudioItems, setTranslatedAudioItems] = useState([]);
   const [participantTranslationStatus, setParticipantTranslationStatus] = useState({});
   const [listenerMode, setListenerMode] = useState("original_translated_audio");
@@ -641,6 +719,8 @@ export default function ChatPage() {
   const isCameraOffRef = useRef(false);
   const isVideoCallRef = useRef(false);
   const isHandRaisedRef = useRef(false);
+  const noiseFloorRef = useRef(0.005);
+
 
   const directTargets = useMemo(() => {
     return members.filter((member) => {
@@ -976,7 +1056,32 @@ export default function ChatPage() {
         const now = performance.now();
         const elapsed = now - recorder.__startedAt;
 
-        if (rms >= VOICE_RMS_THRESHOLD) {
+        // Adapt noise floor
+        if (rms < 0.05) {
+          noiseFloorRef.current = noiseFloorRef.current * 0.95 + rms * 0.05;
+        }
+
+        // Determine active threshold based on preset
+        let activeThreshold = VOICE_RMS_THRESHOLD;
+        if (vadPreset === "Quiet Room") activeThreshold = 0.006;
+        else if (vadPreset === "Office") activeThreshold = 0.012;
+        else if (vadPreset === "Classroom") activeThreshold = 0.020;
+        else if (vadPreset === "Noisy Environment") activeThreshold = 0.035;
+        else if (vadPreset === "Custom") activeThreshold = customVadThreshold;
+
+        if (adaptiveSilence) {
+          activeThreshold = Math.max(activeThreshold, noiseFloorRef.current * 2.0);
+        }
+
+        // Determine active silence timeout
+        let activeSilenceMs = VOICE_SILENCE_MS;
+        if (vadPreset === "Quiet Room") activeSilenceMs = 400;
+        else if (vadPreset === "Office") activeSilenceMs = 600;
+        else if (vadPreset === "Classroom") activeSilenceMs = 800;
+        else if (vadPreset === "Noisy Environment") activeSilenceMs = 1000;
+        else if (vadPreset === "Custom") activeSilenceMs = customSilenceMs;
+
+        if (rms >= activeThreshold) {
           recorder.__speechDetected = true;
           recorder.__lastSpeechAt = now;
           if (!recorder.__activitySent) {
@@ -998,7 +1103,8 @@ export default function ChatPage() {
         const utteranceComplete =
           recorder.__speechDetected &&
           elapsed >= VOICE_MIN_UTTERANCE_MS &&
-          silenceDuration >= VOICE_SILENCE_MS;
+          silenceDuration >= activeSilenceMs;
+
         const maximumReached =
           recorder.__speechDetected && elapsed >= VOICE_MAX_UTTERANCE_MS;
         const idleReset =
@@ -1398,6 +1504,94 @@ export default function ChatPage() {
     });
   };
 
+  const toggleScreenShare = async () => {
+    if (!isConnected) return;
+    if (userRole !== "host" && userRole !== "admin" && userRole !== "co-host") {
+      if (!hostPermissions.allow_share) {
+        setCallError("Screen sharing is disabled by the meeting host.");
+        return;
+      }
+    }
+    if (isScreenSharing) {
+      stopScreenShare();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: true
+      });
+      setScreenStream(stream);
+      setIsScreenSharing(true);
+      const screenVideoTrack = stream.getVideoTracks()[0];
+      peerConnectionsRef.current.forEach((connection) => {
+        const senders = connection.getSenders();
+        const videoSender = senders.find((s) => s.track && s.track.kind === "video");
+        if (videoSender) {
+          videoSender.replaceTrack(screenVideoTrack).catch(err => {
+            console.warn("Failed to replace track", err);
+          });
+        }
+      });
+      setLocalMediaStream(stream);
+      screenVideoTrack.onended = () => {
+        stopScreenShare();
+      };
+      sendSocketMessage({
+        type: "screen_share_update",
+        room_id: session.roomId,
+        active: true,
+      });
+      noteDiagnostic("screen sharing started");
+    } catch (err) {
+      console.error("Screen sharing denied", err);
+      setCallError("Screen sharing permission denied or failed.");
+    }
+  };
+
+  const stopScreenShare = async () => {
+    setIsScreenSharing(false);
+    if (screenStream) {
+      screenStream.getTracks().forEach((t) => t.stop());
+      setScreenStream(null);
+    }
+    try {
+      const originalStream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: !isCameraOff
+      });
+      localStreamRef.current = originalStream;
+      setLocalMediaStream(originalStream);
+      const cameraVideoTrack = originalStream.getVideoTracks()[0];
+      peerConnectionsRef.current.forEach((connection) => {
+        const senders = connection.getSenders();
+        const videoSender = senders.find((s) => s.track && s.track.kind === "video");
+        if (videoSender && cameraVideoTrack) {
+          videoSender.replaceTrack(cameraVideoTrack).catch(err => {
+            console.warn("Failed to restore camera track", err);
+          });
+        }
+      });
+    } catch (err) {
+      console.warn("Failed to restore camera track", err);
+    }
+    sendSocketMessage({
+      type: "screen_share_update",
+      room_id: session.roomId,
+      active: false,
+    });
+    noteDiagnostic("screen sharing stopped");
+  };
+
+  const updateRecording = (status) => {
+    if (userRole !== "host" && userRole !== "admin" && userRole !== "co-host") return;
+    sendSocketMessage({
+      type: "recording_update",
+      room_id: session.roomId,
+      status: status,
+    });
+  };
+
   const startResizingLeft = (mouseDownEvent) => {
     mouseDownEvent.preventDefault();
     const startWidth = leftPanelWidth;
@@ -1689,6 +1883,55 @@ export default function ChatPage() {
 
       socket.onmessage = async (event) => {
         const payload = JSON.parse(event.data);
+        if (payload.type === "sync_collaboration_state") {
+          setWhiteboardShapes(payload.whiteboard_shapes || []);
+          setNotesContent(payload.notes_content || "");
+          setHostPermissions(payload.host_permissions || {
+            allow_share: true,
+            allow_whiteboard: true,
+            allow_files: true,
+            allow_notes: true,
+            allow_annotations: true,
+          });
+          setActiveScreenSharer(payload.active_screen_sharer_session_id);
+          setRecordingStatus(payload.recording_status || { status: "stopped", timestamp: null });
+          if (payload.active_screen_sharer_session_id) {
+            setMeetingLayout("presentation");
+          }
+          return;
+        }
+        if (payload.type === "whiteboard_update") {
+          setWhiteboardShapes(payload.whiteboard_shapes || []);
+          return;
+        }
+        if (payload.type === "notes_update") {
+          setNotesContent(payload.notes_content || "");
+          return;
+        }
+        if (payload.type === "screen_share_update") {
+          setActiveScreenSharer(payload.active_screen_sharer_session_id);
+          if (payload.active_screen_sharer_session_id) {
+            setMeetingLayout("presentation");
+          } else {
+            setMeetingLayout("gallery");
+          }
+          return;
+        }
+        if (payload.type === "permissions_update") {
+          setHostPermissions(payload.host_permissions || {});
+          return;
+        }
+        if (payload.type === "recording_update") {
+          setRecordingStatus(payload.recording_status || { status: "stopped", timestamp: null });
+          return;
+        }
+        if (payload.type === "presentation_pointer") {
+          if (window.onPresentationPointerReceived) {
+            window.onPresentationPointerReceived(payload);
+          }
+          return;
+        }
+
         if (ADMIN_CONTROL_TYPES.has(payload.type) && await handleAdminControlEvent(payload)) {
           return;
         }
@@ -2040,6 +2283,43 @@ export default function ChatPage() {
             ))}
           </div>
 
+          {(userRole === "host" || userRole === "admin" || userRole === "co-host") && (
+            <div className="mt-4 border-t border-white/[0.06] pt-4 px-2 mb-4">
+              <p className="text-xs font-semibold uppercase tracking-wider text-ui-muted mb-2.5">
+                Host Controls
+              </p>
+              <div className="space-y-2.5">
+                {[
+                  ["allow_share", "Allow Screen Share"],
+                  ["allow_whiteboard", "Allow Whiteboard"],
+                  ["allow_notes", "Allow Shared Notes"],
+                  ["allow_files", "Allow File Uploads"],
+                  ["allow_annotations", "Allow Annotations"],
+                ].map(([key, label]) => (
+                  <label key={key} className="flex items-center justify-between text-xs text-brand-bg/85 cursor-pointer">
+                    <span>{label}</span>
+                    <input
+                      type="checkbox"
+                      checked={hostPermissions[key] ?? true}
+                      onChange={(e) => {
+                        const val = e.target.checked;
+                        sendSocketMessage({
+                          type: "permissions_update",
+                          room_id: session.roomId,
+                          host_permissions: {
+                            ...hostPermissions,
+                            [key]: val
+                          }
+                        });
+                      }}
+                      className="accent-brand-accent h-3.5 w-3.5"
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
           <CallPanel
             userRole={userRole}
             callActive={callActive}
@@ -2199,7 +2479,53 @@ export default function ChatPage() {
               muteRemoteAudio={originalAudioMuted}
               translationStatuses={participantTranslationStatus}
               videoCallingEnabled={featureFlags.video_calling}
+              meetingLayout={meetingLayout}
+              activeScreenSharer={activeScreenSharer}
+              sessionId={sessionId}
+              socket={socketRef.current}
+              roomId={session.roomId}
+              isPinned={isPinned}
+              onTogglePin={() => setIsPinned(!isPinned)}
+              onToggleLayout={() => setMeetingLayout(meetingLayout === "gallery" ? "presentation" : "gallery")}
             />
+
+            {/* Floating Live Captions Overlay */}
+            {captionSettings.showCaptions && activeCaption && (
+              <div 
+                className="pointer-events-none absolute left-0 right-0 flex justify-center z-20"
+                style={{
+                  top: captionSettings.position === "top" ? "80px" : "auto",
+                  bottom: captionSettings.position === "bottom" ? "100px" : "auto",
+                }}
+              >
+                <div 
+                  className={`pointer-events-auto rounded-lg px-4 py-2 text-center transition-all ${
+                    captionSettings.theme === "light" 
+                      ? "bg-white text-black border border-black/10" 
+                      : captionSettings.theme === "amber" 
+                        ? "bg-[#1e1e1e] text-amber-400 border border-amber-500/20" 
+                        : "bg-black text-white border border-white/10"
+                  }`}
+                  style={{
+                    fontSize: captionSettings.fontSize,
+                    backgroundColor: `rgba(${
+                      captionSettings.theme === "light" ? "255, 255, 255" : "0, 0, 0"
+                    }, ${captionSettings.bgOpacity})`,
+                    maxWidth: captionSettings.maxWidth,
+                    boxShadow: "0 4px 12px rgba(0, 0, 0, 0.5)",
+                  }}
+                >
+                  <p className="text-[10px] font-bold uppercase opacity-60 tracking-wider mb-0.5">
+                    {activeCaption.sender} ({activeCaption.detected_language?.toUpperCase()})
+                  </p>
+                  <p className="leading-snug font-medium">
+                    {captionSettings.captionMode === "original" 
+                      ? activeCaption.original 
+                      : activeCaption.translated}
+                  </p>
+                </div>
+              </div>
+            )}
 
             <div className="meeting-scroll space-y-3 px-4 py-5 sm:px-6">
               {connectionError && (
@@ -2252,17 +2578,32 @@ export default function ChatPage() {
             </button>
 
             <button
-              disabled
-              className="p-3 rounded-full bg-white/[0.02] text-brand-bg/25 cursor-not-allowed"
-              title="Screen sharing (Coming Soon)"
+              onClick={toggleScreenShare}
+              className={`p-3 rounded-full transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-brand-accent ${
+                isScreenSharing
+                  ? "bg-brand-accent text-white"
+                  : "bg-white/[0.06] text-brand-bg/85 hover:bg-white/[0.12]"
+              }`}
+              title={isScreenSharing ? "Stop Screen Share" : "Share Screen"}
             >
               <Monitor size={20} />
             </button>
 
             <button
-              disabled
-              className="p-3 rounded-full bg-white/[0.02] text-brand-bg/25 cursor-not-allowed"
-              title="Whiteboard (Coming Soon)"
+              onClick={() => {
+                if (meetingPanel === "whiteboard" && !rightPanelCollapsed) {
+                  setRightPanelCollapsed(true);
+                } else {
+                  setMeetingPanel("whiteboard");
+                  setRightPanelCollapsed(false);
+                }
+              }}
+              className={`p-3 rounded-full transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-brand-accent ${
+                !rightPanelCollapsed && meetingPanel === "whiteboard"
+                  ? "bg-brand-accent text-white"
+                  : "bg-white/[0.06] text-brand-bg/85 hover:bg-white/[0.12]"
+              }`}
+              title="Toggle Whiteboard"
             >
               <Presentation size={20} />
             </button>
@@ -2278,6 +2619,72 @@ export default function ChatPage() {
             >
               <Hand size={20} />
             </button>
+
+            <button
+              onClick={() => setShowCaptionSettings(!showCaptionSettings)}
+              className={`p-3 rounded-full transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-brand-accent ${
+                showCaptionSettings
+                  ? "bg-brand-accent text-white"
+                  : "bg-white/[0.06] text-brand-bg/85 hover:bg-white/[0.12]"
+              }`}
+              title="Caption Settings"
+            >
+              <Captions size={20} />
+            </button>
+
+            {/* Recording controls UI placeholder */}
+            <div className="flex items-center gap-1.5 border-l border-white/10 pl-2.5">
+              {recordingStatus.status === "recording" && (
+                <span className="flex h-2 w-2 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                </span>
+              )}
+              <button
+                onClick={() => {
+                  const canRec = userRole === "host" || userRole === "admin" || userRole === "co-host";
+                  if (!canRec) return;
+                  if (recordingStatus.status === "recording") {
+                    updateRecording("stopped");
+                  } else {
+                    updateRecording("recording");
+                  }
+                }}
+                disabled={!(userRole === "host" || userRole === "admin" || userRole === "co-host")}
+                className={`px-3 py-1.5 rounded-full transition-all duration-200 text-[10px] font-bold uppercase tracking-wider focus:outline-none focus:ring-2 focus:ring-brand-accent ${
+                  recordingStatus.status === "recording"
+                    ? "bg-red-650 text-white animate-pulse"
+                    : recordingStatus.status === "paused"
+                      ? "bg-amber-500 text-white"
+                      : "bg-white/[0.06] text-brand-bg/85 hover:bg-white/[0.12]"
+                } ${!(userRole === "host" || userRole === "admin" || userRole === "co-host") ? "opacity-50 cursor-not-allowed" : ""}`}
+                title={
+                  !(userRole === "host" || userRole === "admin" || userRole === "co-host")
+                    ? `Recording is ${recordingStatus.status}`
+                    : recordingStatus.status === "recording"
+                      ? "Stop Recording"
+                      : "Start Recording"
+                }
+              >
+                {recordingStatus.status === "recording" ? "● Rec" : "Record"}
+              </button>
+              {(userRole === "host" || userRole === "admin" || userRole === "co-host") && recordingStatus.status === "recording" && (
+                <button
+                  onClick={() => updateRecording("paused")}
+                  className="p-1 rounded bg-white/10 text-white text-[9px] font-bold hover:bg-white/20"
+                >
+                  Pause
+                </button>
+              )}
+              {(userRole === "host" || userRole === "admin" || userRole === "co-host") && recordingStatus.status === "paused" && (
+                <button
+                  onClick={() => updateRecording("recording")}
+                  className="p-1 rounded bg-brand-accent text-white text-[9px] font-bold hover:brightness-110"
+                >
+                  Resume
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="flex items-center gap-3">
@@ -2338,6 +2745,44 @@ export default function ChatPage() {
 
             <button
               onClick={() => {
+                if (meetingPanel === "notes" && !rightPanelCollapsed) {
+                  setRightPanelCollapsed(true);
+                } else {
+                  setMeetingPanel("notes");
+                  setRightPanelCollapsed(false);
+                }
+              }}
+              className={`p-2.5 rounded-lg transition-all focus:outline-none ${
+                !rightPanelCollapsed && meetingPanel === "notes"
+                  ? "bg-brand-accent/20 text-brand-accent"
+                  : "text-ui-muted hover:bg-white/[0.04]"
+              }`}
+              title="Toggle Notes Panel"
+            >
+              <StickyNote size={18} />
+            </button>
+
+            <button
+              onClick={() => {
+                if (meetingPanel === "files" && !rightPanelCollapsed) {
+                  setRightPanelCollapsed(true);
+                } else {
+                  setMeetingPanel("files");
+                  setRightPanelCollapsed(false);
+                }
+              }}
+              className={`p-2.5 rounded-lg transition-all focus:outline-none ${
+                !rightPanelCollapsed && meetingPanel === "files"
+                  ? "bg-brand-accent/20 text-brand-accent"
+                  : "text-ui-muted hover:bg-white/[0.04]"
+              }`}
+              title="Toggle Files Panel"
+            >
+              <FolderOpen size={18} />
+            </button>
+
+            <button
+              onClick={() => {
                 if (meetingPanel === "diagnostics" && !rightPanelCollapsed) {
                   setRightPanelCollapsed(true);
                 } else {
@@ -2389,6 +2834,9 @@ export default function ChatPage() {
           {[
             ["chat", "Chat"],
             ["translation", "Translation"],
+            ["whiteboard", "Whiteboard"],
+            ["notes", "Notes"],
+            ["files", "Files"],
             ["diagnostics", "Diagnostics"],
           ].map(([value, label]) => (
             <button
@@ -2514,11 +2962,187 @@ export default function ChatPage() {
               remoteStreams={remoteStreams}
               peerDiagnostics={peerDiagnostics}
               transcripts={transcripts}
-            />
+              userRole={userRole}
 
+              vadPreset={vadPreset}
+              setVadPreset={setVadPreset}
+              customVadThreshold={customVadThreshold}
+              setCustomVadThreshold={setCustomVadThreshold}
+              customSilenceMs={customSilenceMs}
+              setCustomSilenceMs={setCustomSilenceMs}
+              adaptiveSilence={adaptiveSilence}
+              setAdaptiveSilence={setAdaptiveSilence}
+              developerMode={developerMode}
+              setDeveloperMode={setDeveloperMode}
+            />
+          </div>
+        )}
+
+        {meetingPanel === "whiteboard" && (
+          <div className="meeting-scroll meeting-tool-panel flex-grow flex flex-col h-full overflow-hidden" role="tabpanel">
+            <WhiteboardPanel
+              roomId={session.roomId}
+              sessionId={sessionId}
+              socket={socketRef.current}
+              initialShapes={whiteboardShapes}
+              allowEditing={hostPermissions.allow_whiteboard || userRole === "host" || userRole === "admin" || userRole === "co-host"}
+            />
+          </div>
+        )}
+
+        {meetingPanel === "notes" && (
+          <div className="meeting-scroll meeting-tool-panel flex-grow flex flex-col h-full overflow-hidden" role="tabpanel">
+            <NotesPanel
+              roomId={session.roomId}
+              sessionId={sessionId}
+              socket={socketRef.current}
+              initialContent={notesContent}
+              allowEditing={hostPermissions.allow_notes || userRole === "host" || userRole === "admin" || userRole === "co-host"}
+            />
+          </div>
+        )}
+
+        {meetingPanel === "files" && (
+          <div className="meeting-scroll meeting-tool-panel flex-grow flex flex-col h-full overflow-hidden" role="tabpanel">
+            <FilesPanel
+              roomId={session.roomId}
+              sessionId={sessionId}
+              username={session.username}
+              socket={socketRef.current}
+              currentUserRole={userRole}
+              allowUploads={hostPermissions.allow_files || userRole === "host" || userRole === "admin" || userRole === "co-host"}
+            />
           </div>
         )}
       </aside>
+
+      {/* Caption Settings Modal */}
+      {showCaptionSettings && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-ui-secondary border border-white/10 rounded-2xl p-6 w-full max-w-sm space-y-4 shadow-2xl animate-fade-in text-brand-bg">
+            <div className="flex items-center justify-between border-b border-white/10 pb-3">
+              <h3 className="text-base font-bold flex items-center gap-2">
+                <Captions size={18} className="text-brand-accent" />
+                Live Captions Settings
+              </h3>
+              <button 
+                onClick={() => setShowCaptionSettings(false)}
+                className="text-ui-muted hover:text-brand-bg transition text-xs font-semibold"
+              >
+                Close
+              </button>
+            </div>
+            
+            <div className="space-y-3.5 text-xs">
+              <label className="flex items-center justify-between cursor-pointer">
+                <span>Show Captions</span>
+                <input 
+                  type="checkbox"
+                  checked={captionSettings.showCaptions}
+                  onChange={(e) => setCaptionSettings({ ...captionSettings, showCaptions: e.target.checked })}
+                  className="accent-brand-accent h-4 w-4"
+                />
+              </label>
+
+              <label className="block space-y-1">
+                <span className="text-ui-muted">Caption Mode</span>
+                <select
+                  value={captionSettings.captionMode}
+                  onChange={(e) => setCaptionSettings({ ...captionSettings, captionMode: e.target.value })}
+                  className="w-full bg-brand-dark border border-white/10 rounded px-2.5 py-1.5 focus:outline-none focus:border-brand-accent"
+                >
+                  <option value="translated">Translated Text</option>
+                  <option value="original">Original Speech Text</option>
+                </select>
+              </label>
+
+              <label className="block space-y-1">
+                <span className="text-ui-muted">Position</span>
+                <select
+                  value={captionSettings.position}
+                  onChange={(e) => setCaptionSettings({ ...captionSettings, position: e.target.value })}
+                  className="w-full bg-brand-dark border border-white/10 rounded px-2.5 py-1.5 focus:outline-none focus:border-brand-accent"
+                >
+                  <option value="bottom">Bottom Overlay</option>
+                  <option value="top">Top Overlay</option>
+                </select>
+              </label>
+
+              <label className="block space-y-1">
+                <span className="text-ui-muted">Font Size</span>
+                <select
+                  value={captionSettings.fontSize}
+                  onChange={(e) => setCaptionSettings({ ...captionSettings, fontSize: e.target.value })}
+                  className="w-full bg-brand-dark border border-white/10 rounded px-2.5 py-1.5 focus:outline-none focus:border-brand-accent"
+                >
+                  <option value="12px">Small (12px)</option>
+                  <option value="16px">Medium (16px)</option>
+                  <option value="22px">Large (22px)</option>
+                </select>
+              </label>
+
+              <label className="block space-y-1">
+                <span className="text-ui-muted">Color Theme</span>
+                <select
+                  value={captionSettings.theme}
+                  onChange={(e) => setCaptionSettings({ ...captionSettings, theme: e.target.value })}
+                  className="w-full bg-brand-dark border border-white/10 rounded px-2.5 py-1.5 focus:outline-none focus:border-brand-accent"
+                >
+                  <option value="dark">White on Black</option>
+                  <option value="light">Black on White</option>
+                  <option value="amber">Amber on Dark Gray</option>
+                </select>
+              </label>
+
+              <label className="block space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-ui-muted">Background Opacity</span>
+                  <span>{Math.round(captionSettings.bgOpacity * 100)}%</span>
+                </div>
+                <input 
+                  type="range"
+                  min="0.1"
+                  max="1.0"
+                  step="0.1"
+                  value={captionSettings.bgOpacity}
+                  onChange={(e) => setCaptionSettings({ ...captionSettings, bgOpacity: parseFloat(e.target.value) })}
+                  className="w-full accent-brand-accent"
+                />
+              </label>
+
+              <label className="block space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-ui-muted">Rendering Delay</span>
+                  <span>{captionSettings.delay}ms</span>
+                </div>
+                <input 
+                  type="range"
+                  min="0"
+                  max="2000"
+                  step="100"
+                  value={captionSettings.delay}
+                  onChange={(e) => setCaptionSettings({ ...captionSettings, delay: parseInt(e.target.value, 10) })}
+                  className="w-full accent-brand-accent"
+                />
+              </label>
+
+              <label className="block space-y-1">
+                <span className="text-ui-muted">Maximum Width</span>
+                <select
+                  value={captionSettings.maxWidth}
+                  onChange={(e) => setCaptionSettings({ ...captionSettings, maxWidth: e.target.value })}
+                  className="w-full bg-brand-dark border border-white/10 rounded px-2.5 py-1.5 focus:outline-none focus:border-brand-accent"
+                >
+                  <option value="400px">Narrow (400px)</option>
+                  <option value="600px">Standard (600px)</option>
+                  <option value="900px">Wide (900px)</option>
+                </select>
+              </label>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
