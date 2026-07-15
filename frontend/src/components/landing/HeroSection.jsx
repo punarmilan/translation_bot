@@ -66,9 +66,9 @@ function MeetingMockup() {
 }
 
 export default function HeroSection({ user, cms }) {
-  const kicker = cms?.eyebrow || "Meet naturally across languages";
-  const title = cms?.title || "Speak Your Language. Everyone Else Will Understand.";
-  const body = cms?.body || "AI-powered multilingual meetings with live voice translation, captions, and seamless collaboration.";
+  const kicker = cms?.eyebrow || "One Meeting. Every Language.";
+  const title = cms?.title || "Speak Naturally. Everyone Understands.";
+  const body = cms?.body || "Communicate naturally with friends, students, or international teams. Speak in your own language while everyone receives real-time translated voice, live captions, and text chat in theirs.";
   const primaryBtn = cms?.primary_button || (user ? "Open workspace" : "Get started");
   const secondaryBtn = cms?.secondary_button || "Explore features";
 

@@ -3387,3 +3387,331 @@ button:disabled {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Land Page UX Refresh Styling additions */
+
+.marquee-showcase-section {
+  padding: 80px 0;
+  background: var(--color-bg-primary);
+  overflow: hidden;
+  position: relative;
+}
+
+.marquee-container {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: 100%;
+  margin-top: 40px;
+  position: relative;
+}
+
+.marquee-container::before,
+.marquee-container::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 180px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.marquee-container::before {
+  left: 0;
+  background: linear-gradient(to right, var(--color-bg-primary), transparent);
+}
+
+.marquee-container::after {
+  right: 0;
+  background: linear-gradient(to left, var(--color-bg-primary), transparent);
+}
+
+.marquee-row {
+  display: flex;
+  gap: 24px;
+  width: max-content;
+  will-change: transform;
+}
+
+.marquee-row--left {
+  animation: scroll-left 55s linear infinite;
+}
+
+.marquee-row--right {
+  animation: scroll-right 55s linear infinite;
+}
+
+.marquee-row:hover {
+  animation-play-state: paused;
+}
+
+@keyframes scroll-left {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-33.333%); }
+}
+
+@keyframes scroll-right {
+  0% { transform: translateX(-33.333%); }
+  100% { transform: translateX(0); }
+}
+
+.marquee-card {
+  width: 320px;
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(12px);
+  border-radius: 16px;
+  padding: 24px;
+  text-align: left;
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.3s ease, box-shadow 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+[data-theme="light"] .marquee-card {
+  background: rgba(15, 23, 42, 0.02);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.marquee-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(91, 141, 239, 0.4);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.2);
+}
+
+.marquee-card__visual {
+  width: 100%;
+  height: 160px;
+  border-radius: 12px;
+  background: rgba(91, 141, 239, 0.04);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 18px;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.marquee-card__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.marquee-card__icon {
+  width: 32px;
+  height: 32px;
+  color: var(--color-accent);
+}
+
+.marquee-card__glow {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  background: radial-gradient(circle, rgba(91, 141, 239, 0.15) 0%, transparent 70%);
+  top: 0;
+  left: 0;
+}
+
+.marquee-card h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0 0 6px 0;
+}
+
+.marquee-card p {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* Three Core Benefits Section */
+.benefits-section {
+  background: var(--color-soft-hero);
+  padding: 90px 0;
+  border-top: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.benefits-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 32px;
+  margin-top: 48px;
+}
+
+.benefit-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  padding: 36px 30px;
+  text-align: center;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.benefit-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-panel);
+}
+
+.benefit-icon {
+  font-size: 32px;
+  margin-bottom: 20px;
+}
+
+.benefit-card h3 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 12px 0;
+  color: var(--color-text-primary);
+}
+
+.benefit-card p {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* 3-Tier SaaS Pricing Section */
+.pricing-section {
+  padding: 90px 0;
+  background: var(--color-bg-primary);
+}
+
+.pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 32px;
+  margin-top: 50px;
+  align-items: stretch;
+}
+
+.pricing-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 20px;
+  padding: 40px 32px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.pricing-card:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
+}
+
+.pricing-card--featured {
+  border: 2px solid var(--color-accent);
+  background: linear-gradient(180deg, var(--color-surface) 0%, rgba(91, 141, 239, 0.03) 100%);
+  box-shadow: var(--shadow-soft);
+}
+
+.pricing-card__badge {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  background: var(--color-accent);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 12px;
+  border-radius: 20px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.pricing-card__title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0 0 16px 0;
+}
+
+.pricing-card__price {
+  display: flex;
+  align-items: baseline;
+  margin-bottom: 16px;
+}
+
+.price-symbol {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  align-self: flex-start;
+  margin-top: 4px;
+}
+
+.price-amount {
+  font-size: 48px;
+  font-weight: 800;
+  color: var(--color-text-primary);
+  line-height: 1;
+}
+
+.price-period {
+  font-size: 14px;
+  color: var(--color-text-muted);
+  margin-left: 4px;
+}
+
+.pricing-card__desc {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  margin: 0 0 28px 0;
+}
+
+.pricing-card__features {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 40px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex-grow: 1;
+}
+
+.pricing-card__features li {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pricing-card__action {
+  width: 100%;
+}
+
+.pricing-card__action button {
+  width: 100%;
+  display: block;
+}
+
+/* Nav Link adjustments */
+.nav-open-workspace-link {
+  font-weight: 600;
+  color: var(--color-accent) !important;
+}
+
+@media (max-width: 960px) {
+  .pricing-grid,
+  .benefits-grid {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  .pricing-card,
+  .benefit-card {
+    padding: 30px 24px;
+  }
+}
+

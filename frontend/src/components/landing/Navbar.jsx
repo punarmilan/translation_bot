@@ -2,14 +2,6 @@ import { useEffect, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import ThemeToggle from "./ThemeToggle";
 
-const links = [
-  ["Features", "/features"],
-  ["Solutions", "/solutions"],
-  ["How it works", "/how-it-works"],
-  ["Pricing", "/pricing"],
-  ["Help Center", "/help"],
-];
-
 export default function Navbar({ user }) {
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
@@ -24,10 +16,27 @@ export default function Navbar({ user }) {
 
   useEffect(() => setOpen(false), [location.pathname]);
 
+  const handleScrollToTop = (e) => {
+    if (location.pathname === "/") {
+      e.preventDefault();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  };
+
+  const handlePricingClick = (e) => {
+    if (location.pathname === "/") {
+      e.preventDefault();
+      const el = document.getElementById("pricing");
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth" });
+      }
+    }
+  };
+
   return (
     <header className={`landing-nav ${scrolled ? "is-scrolled" : ""}`}>
       <nav className="landing-shell landing-nav__inner" aria-label="Main navigation">
-        <Link to="/" className="brand-lockup">
+        <Link to="/" onClick={handleScrollToTop} className="brand-lockup">
           <span className="brand-mark" aria-hidden="true">TB</span>
           <span>Translation Bot</span>
         </Link>
@@ -45,12 +54,24 @@ export default function Navbar({ user }) {
 
         <div id="landing-menu" className={`landing-nav__menu ${open ? "is-open" : ""}`}>
           <div className="landing-nav__links">
-            {links.map(([label, path]) => (
-              <NavLink key={path} to={path} className={({ isActive }) => isActive ? "is-active" : ""}>
-                {label}
-                {path === "/pricing" && <small>Coming soon</small>}
-              </NavLink>
-            ))}
+            <Link to="/" onClick={handleScrollToTop} className={location.pathname === "/" ? "is-active" : ""}>
+              Home
+            </Link>
+            <NavLink to="/features" className={({ isActive }) => isActive ? "is-active" : ""}>
+              Features
+            </NavLink>
+            <NavLink to="/solutions" className={({ isActive }) => isActive ? "is-active" : ""}>
+              Solutions
+            </NavLink>
+            <Link to="/pricing" onClick={handlePricingClick} className={location.pathname === "/pricing" ? "is-active" : ""}>
+              Pricing
+            </Link>
+            <NavLink to="/help" className={({ isActive }) => isActive ? "is-active" : ""}>
+              Help Center
+            </NavLink>
+            <Link to={user ? "/chat" : "/signup"} className="nav-open-workspace-link">
+              Open Workspace
+            </Link>
           </div>
           <div className="landing-nav__actions">
             <ThemeToggle />
