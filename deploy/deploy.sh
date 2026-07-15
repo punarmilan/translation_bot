@@ -58,6 +58,11 @@ if ! "${compose[@]}" up -d --remove-orphans --wait --wait-timeout 1200; then
   echo "Listeners currently bound to ports 80/443 (a host service such as nginx here must be stopped before Caddy can start):" >&2
   ss -ltnp 'sport = :80' >&2 || true
   ss -ltnp 'sport = :443' >&2 || true
+  echo "Container status and recent Caddy output:" >&2
+  "${compose[@]}" ps >&2 || true
+  "${compose[@]}" logs --tail 50 caddy >&2 || true
+  echo "Caddy healthcheck log:" >&2
+  docker inspect --format '{{json .State.Health}}' giftme-caddy-1 >&2 || true
   if restore_release; then
     echo "Rolling back to the previous image tag..." >&2
     compose=(docker compose --env-file .env --env-file "${release_file}" -f "${compose_file}")

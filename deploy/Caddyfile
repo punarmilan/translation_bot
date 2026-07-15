@@ -2,6 +2,13 @@
 	email {$ACME_EMAIL}
 }
 
+# Internal-only health endpoint for the container healthcheck: plain HTTP, no
+# hostname, so no auto-HTTPS redirect, DNS lookup, or TLS involved. Port 8080
+# is not published to the host.
+:8080 {
+	respond /healthz "ok" 200
+}
+
 (security_headers) {
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
