@@ -14,6 +14,7 @@ import PricingPage from "./pages/PricingPage";
 import SignupPage from "./pages/SignupPage";
 import SolutionsPage from "./pages/SolutionsPage";
 import VoiceTestPage from "./pages/VoiceTestPage";
+import BlogPage from "./pages/BlogPage";
 
 function GuestOnly({ children }) {
   const { user, loading } = useAuth();
@@ -45,6 +46,8 @@ function AppRoutes() {
         <Route path="/help" element={<HelpPage />} />
         <Route path="/docs" element={<DocsPage />} />
         <Route path="/pricing" element={<PricingPage />} />
+        <Route path="/blog" element={<BlogPage />} />
+        <Route path="/blog/:slug" element={<BlogPage />} />
       <Route
         path="/login"
         element={

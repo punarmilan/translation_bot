@@ -2,7 +2,7 @@ import axios from "axios";
 
 const API_HOST = window.location.hostname || "localhost";
 const API_PROTOCOL = window.location.protocol === "https:" ? "https" : "http";
-const BASE_URL =
+export const BASE_URL =
   import.meta.env.VITE_API_BASE_URL || `${API_PROTOCOL}://${API_HOST}:8000`;
 
 const client = axios.create({ baseURL: BASE_URL });

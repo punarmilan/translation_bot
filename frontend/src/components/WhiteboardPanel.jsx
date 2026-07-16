@@ -21,6 +21,7 @@ export default function WhiteboardPanel({
   socket,
   initialShapes = [],
   allowEditing = true,
+  onShapesChange,
 }) {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -235,6 +236,7 @@ export default function WhiteboardPanel({
         };
         const updated = [...shapes, newShape];
         setShapes(updated);
+        onShapesChange?.(updated);
         broadcastShapes(updated);
       }
       return;
@@ -256,6 +258,7 @@ export default function WhiteboardPanel({
         };
         const updated = [...shapes, newSticky];
         setShapes(updated);
+        onShapesChange?.(updated);
         broadcastShapes(updated);
       }
       return;
@@ -283,6 +286,7 @@ export default function WhiteboardPanel({
         return true;
       });
       setShapes(updated);
+      onShapesChange?.(updated);
       broadcastShapes(updated);
       return;
     }
@@ -313,15 +317,20 @@ export default function WhiteboardPanel({
     const pos = getPos(e);
 
     if (tool === "pen" || tool === "highlighter") {
-      setCurrentLine((curr) => ({
-        ...curr,
-        points: [...curr.points, pos],
-      }));
+      setCurrentLine((curr) => {
+        const lastPt = curr.points[curr.points.length - 1];
+        const dist = lastPt ? Math.hypot(pos.x - lastPt.x, pos.y - lastPt.y) : 999;
+        if (dist < 3) return curr;
+        return {
+          ...curr,
+          points: [...curr.points, { x: Math.round(pos.x), y: Math.round(pos.y) }],
+        };
+      });
     } else {
       setCurrentLine((curr) => ({
         ...curr,
-        w: pos.x - curr.x,
-        h: pos.y - curr.y,
+        w: Math.round(pos.x - curr.x),
+        h: Math.round(pos.y - curr.y),
       }));
     }
   };
@@ -332,6 +341,7 @@ export default function WhiteboardPanel({
     if (currentLine) {
       const updated = [...shapes, currentLine];
       setShapes(updated);
+      onShapesChange?.(updated);
       setHistory([]);
       broadcastShapes(updated);
     }
@@ -345,6 +355,7 @@ export default function WhiteboardPanel({
     setHistory((prev) => [...prev, last]);
     const updated = shapes.slice(0, -1);
     setShapes(updated);
+    onShapesChange?.(updated);
     broadcastShapes(updated, "undo");
   };
 
@@ -354,12 +365,14 @@ export default function WhiteboardPanel({
     setHistory((prev) => prev.slice(0, -1));
     const updated = [...shapes, next];
     setShapes(updated);
+    onShapesChange?.(updated);
     broadcastShapes(updated, "redo");
   };
 
   const handleClear = () => {
     if (window.confirm("Are you sure you want to clear the whiteboard?")) {
       setShapes([]);
+      onShapesChange?.([]);
       setHistory([]);
       broadcastShapes([], "clear");
     }
@@ -397,6 +410,7 @@ export default function WhiteboardPanel({
   const onDragEnd = () => {
     if (!draggedSticky) return;
     setDraggedSticky(null);
+    onShapesChange?.(shapes);
     broadcastShapes(shapes);
   };
 
@@ -617,6 +631,7 @@ export default function WhiteboardPanel({
                   const val = e.target.value;
                   const updated = shapes.map((s) => (s.id === sticky.id ? { ...s, text: val } : s));
                   setShapes(updated);
+                  onShapesChange?.(updated);
                   broadcastShapes(updated);
                 }}
                 disabled={!allowEditing}
@@ -628,6 +643,7 @@ export default function WhiteboardPanel({
                   if (!allowEditing) return;
                   const updated = shapes.filter((s) => s.id !== sticky.id);
                   setShapes(updated);
+                  onShapesChange?.(updated);
                   broadcastShapes(updated);
                 }}
                 className="text-[9px] font-bold text-black/50 hover:text-black self-end"

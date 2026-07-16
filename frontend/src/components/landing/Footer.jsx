@@ -6,6 +6,7 @@ const links = [
   ["How it works", "/how-it-works"],
   ["Help Center", "/help"],
   ["Pricing", "/pricing"],
+  ["Blog", "/blog"],
 ];
 
 export default function Footer({ user, cms }) {

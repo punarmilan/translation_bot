@@ -142,109 +142,151 @@ function JoinForm({ user, onJoin, initialRoomId = "", languages = LANGUAGE_OPTIO
   const canJoin = form.roomId.trim();
 
   return (
-    <div className="min-h-screen bg-brand-dark flex items-center justify-center px-4">
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!canJoin) return;
-          onJoin({
-            username: user.username,
-            roomId: form.roomId.trim(),
-            userLang: form.userLang,
-            role: user.role,
-          });
-        }}
-        className="w-full max-w-md rounded-panel border border-white/[0.06] bg-brand-mid p-8 shadow-panel"
-      >
-        <h1 className="mb-1 text-[28px] font-semibold text-brand-bg">Join a room</h1>
-        <p className="mb-7 text-sm text-ui-muted">
-          You are signed in as {user.name || user.username}. Pick a room and language.
-        </p>
+    <div className="min-h-screen bg-brand-dark flex items-center justify-center px-4 py-8">
+      <div className="w-full max-w-4xl grid md:grid-cols-2 gap-8 rounded-panel border border-white/[0.06] bg-brand-mid p-6 md:p-8 shadow-panel">
+        
+        {/* Left Column: Actions */}
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!canJoin) return;
+            onJoin({
+              username: user.username,
+              roomId: form.roomId.trim(),
+              userLang: form.userLang,
+              role: user.role,
+            });
+          }}
+          className="flex flex-col justify-between"
+        >
+          <div>
+            <h1 className="mb-1 text-[28px] font-semibold text-brand-bg">Join a room</h1>
+            <p className="mb-6 text-xs text-ui-muted">
+              Signed in as <strong>{user.name || user.username}</strong> ({user.role})
+            </p>
 
-        <label className="block mb-4">
-          <span className="mb-1.5 block text-xs font-medium text-ui-muted">
-            Room ID
-          </span>
-          <input
-            value={form.roomId}
-            onChange={(event) =>
-              setForm((current) => ({ ...current, roomId: event.target.value }))
-            }
-            className="ui-input text-sm"
-            placeholder="team-room-1"
-          />
-        </label>
+            <label className="block mb-4">
+              <span className="mb-1.5 block text-xs font-medium text-ui-muted">
+                Room ID
+              </span>
+              <input
+                value={form.roomId}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, roomId: event.target.value }))
+                }
+                className="ui-input text-sm"
+                placeholder="Enter a room code or ID"
+              />
+            </label>
 
-        {(user.role === "host" || user.role === "admin") && (
+            {(user.role === "host" || user.role === "admin") && (
+              <button
+                type="button"
+                onClick={async () => {
+                  const roomId = createMeetingCode();
+                  const publicOrigin =
+                    import.meta.env.VITE_PUBLIC_APP_URL || window.location.origin;
+                  const meetingUrl = `${publicOrigin.replace(
+                    /\/$/,
+                    ""
+                  )}/chat?room=${encodeURIComponent(roomId)}`;
+                  setForm((current) => ({ ...current, roomId }));
+                  try {
+                    await copyText(meetingUrl);
+                    setShareStatus("Meeting link copied! Send it to participants.");
+                  } catch {
+                    setShareStatus("Meeting code generated.");
+                  }
+                }}
+                className="mb-4 w-full rounded-control bg-ui-elevated px-4 py-2.5 text-xs font-semibold text-brand-accent hover:bg-white/[0.08] transition"
+              >
+                Generate Shareable Meeting Link
+              </button>
+            )}
+            {shareStatus && (
+              <p className="mb-4 text-xs text-emerald-450 font-medium" role="status">
+                {shareStatus}
+              </p>
+            )}
+
+            <div className="mb-6">
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-ui-muted">
+                  Your Spoken Language
+                </span>
+                <select
+                  value={form.userLang}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, userLang: event.target.value }))
+                  }
+                  className="ui-input text-sm"
+                >
+                  {languages.map((language) => (
+                    <option key={language.value} value={language.value}>
+                      {language.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </div>
+
           <button
-            type="button"
-            onClick={async () => {
-              const roomId = createMeetingCode();
-              const publicOrigin =
-                import.meta.env.VITE_PUBLIC_APP_URL || window.location.origin;
-              const meetingUrl = `${publicOrigin.replace(
-                /\/$/,
-                ""
-              )}/chat?room=${encodeURIComponent(roomId)}`;
-              setForm((current) => ({ ...current, roomId }));
-              try {
-                await copyText(meetingUrl);
-                setShareStatus("Meeting link copied. Join when ready.");
-              } catch {
-                setShareStatus("Meeting code generated.");
-              }
-            }}
-            className="mb-4 w-full rounded-control bg-ui-elevated px-4 py-2.5 text-sm font-semibold text-brand-accent hover:bg-white/[0.08]"
+            type="submit"
+            disabled={!canJoin}
+            className="w-full rounded-control bg-brand-accent py-3 text-sm font-semibold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 transition"
           >
-            Generate meeting link
+            Enter Meeting Room
           </button>
-        )}
-        {shareStatus && (
-          <p className="mb-4 text-xs text-ui-success" role="status">
-            {shareStatus}
-          </p>
-        )}
+        </form>
 
-        <div className="mb-7 grid gap-4 sm:grid-cols-2">
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-ui-muted">
-              Language
-            </span>
-            <select
-              value={form.userLang}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, userLang: event.target.value }))
-              }
-              className="ui-input text-sm"
-            >
-              {languages.map((language) => (
-                <option key={language.value} value={language.value}>
-                  {language.label}
-                </option>
-              ))}
-            </select>
-          </label>
+        {/* Right Column: Onboarding / Guide */}
+        <div className="border-t md:border-t-0 md:border-l border-white/10 pt-6 md:pt-0 md:pl-8 flex flex-col justify-between">
+          <div>
+            <span className="text-[10px] uppercase font-bold text-brand-accent tracking-wider">Quick Start Guide</span>
+            <h2 className="text-xl font-bold text-brand-bg mt-1 mb-4">Welcome to Translation Bot</h2>
+            
+            <div className="space-y-4">
+              <div className="flex gap-3">
+                <div className="text-lg">🗣️</div>
+                <div>
+                  <h3 className="text-xs font-bold text-brand-bg">1. Speak naturally in your language</h3>
+                  <p className="text-[11px] text-ui-muted mt-0.5">Simply select the language you plan to speak. The system will handle transcription and recognition automatically.</p>
+                </div>
+              </div>
 
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-ui-muted">
-              Role
-            </span>
-            <input
-              value={user.role}
-              disabled
-              className="ui-input cursor-not-allowed text-sm capitalize opacity-60"
-            />
-          </label>
+              <div className="flex gap-3">
+                <div className="text-lg">🌐</div>
+                <div>
+                  <h3 className="text-xs font-bold text-brand-bg">2. Choose how you listen</h3>
+                  <p className="text-[11px] text-ui-muted mt-0.5">Choose your preferred translation mode inside the meeting to hear real-time synthesized speech or read live translated captions.</p>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <div className="text-lg">🎨</div>
+                <div>
+                  <h3 className="text-xs font-bold text-brand-bg">3. Collaborate in real-time</h3>
+                  <p className="text-[11px] text-ui-muted mt-0.5">Draw on the whiteboard, type notes with markdown support, or share document files directly inside your meeting room.</p>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <div className="text-lg">🛡️</div>
+                <div>
+                  <h3 className="text-xs font-bold text-brand-bg">4. Private and self-hosted</h3>
+                  <p className="text-[11px] text-ui-muted mt-0.5">Your calls, notes, whiteboard sketches, and files are saved and routed locally. No data leaves your secure local network.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 rounded bg-white/[0.02] border border-white/[0.04] p-3 text-[10px] text-ui-subtle">
+            💡 <strong>First time here?</strong> Generate a shareable link, open it in another tab, and test the speech translation flow immediately!
+          </div>
         </div>
 
-        <button
-          type="submit"
-          disabled={!canJoin}
-          className="w-full rounded-control bg-brand-accent py-3 text-sm font-semibold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          Join Room
-        </button>
-      </form>
+      </div>
     </div>
   );
 }
@@ -2985,6 +3027,7 @@ export default function ChatPage() {
               sessionId={sessionId}
               socket={socketRef.current}
               initialShapes={whiteboardShapes}
+              onShapesChange={setWhiteboardShapes}
               allowEditing={hostPermissions.allow_whiteboard || userRole === "host" || userRole === "admin" || userRole === "co-host"}
             />
           </div>
@@ -2997,6 +3040,7 @@ export default function ChatPage() {
               sessionId={sessionId}
               socket={socketRef.current}
               initialContent={notesContent}
+              onContentChange={setNotesContent}
               allowEditing={hostPermissions.allow_notes || userRole === "host" || userRole === "admin" || userRole === "co-host"}
             />
           </div>

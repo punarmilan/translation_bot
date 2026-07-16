@@ -7,6 +7,7 @@ export default function NotesPanel({
   socket,
   initialContent = "",
   allowEditing = true,
+  onContentChange,
 }) {
   const [content, setContent] = useState(initialContent);
   const [mode, setMode] = useState("edit"); // edit | preview
@@ -52,6 +53,7 @@ export default function NotesPanel({
   const handleChange = (e) => {
     const val = e.target.value;
     setContent(val);
+    onContentChange?.(val);
     setSyncStatus("Saving...");
 
     // Debounce broadcast

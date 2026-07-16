@@ -69,9 +69,6 @@ export default function Navbar({ user }) {
             <NavLink to="/help" className={({ isActive }) => isActive ? "is-active" : ""}>
               Help Center
             </NavLink>
-            <Link to={user ? "/chat" : "/signup"} className="nav-open-workspace-link">
-              Open Workspace
-            </Link>
           </div>
           <div className="landing-nav__actions">
             <ThemeToggle />
