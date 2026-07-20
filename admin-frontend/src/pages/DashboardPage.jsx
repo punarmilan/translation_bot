@@ -21,9 +21,100 @@ const metricConfig = [
 ];
 
 function MiniChart({ rows = [] }) {
-  const values = rows.map((row) => row.meetings + row.translations + row.users);
-  const max = Math.max(...values, 1);
-  return <div className="admin-mini-chart" aria-label="Persisted usage chart">{rows.map((row) => <i key={row.date} title={`${row.date}: ${row.meetings} meetings, ${row.translations} translations`} style={{ height: `${Math.max(8, ((row.meetings + row.translations + row.users) / max) * 100)}%` }} />)}</div>;
+  if (!rows || rows.length === 0) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "200px", border: "1px dashed var(--line)", borderRadius: "7px", background: "var(--surface-muted)", color: "var(--muted)", margin: "1rem 0" }}>
+        <span style={{ fontSize: "13px" }}>No activity data available</span>
+      </div>
+    );
+  }
+
+  const maxMeetings = Math.max(...rows.map(r => r.meetings || 0), 1);
+  const maxTranslations = Math.max(...rows.map(r => r.translations || 0), 1);
+  const maxVal = Math.max(maxMeetings, maxTranslations, 1);
+
+  // Divide Y-axis into 4 ticks
+  const yTicks = [Math.round(maxVal), Math.round(maxVal * 0.66), Math.round(maxVal * 0.33), 0];
+
+  return (
+    <div className="admin-chart-wrapper" style={{ display: "flex", flexDirection: "column", gap: "10px", width: "100%", marginTop: "15px", padding: "10px" }}>
+      {/* Legend */}
+      <div className="admin-chart-legend" style={{ display: "flex", gap: "16px", fontSize: "11px", justifyContent: "flex-end", color: "var(--muted)" }}>
+        <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          <span style={{ width: "10px", height: "10px", background: "#3b82f6", borderRadius: "2px", display: "inline-block" }} /> Meetings
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          <span style={{ width: "10px", height: "10px", background: "#8b5cf6", borderRadius: "2px", display: "inline-block" }} /> Translations
+        </span>
+      </div>
+
+      <div style={{ display: "flex", height: "220px", width: "100%", position: "relative" }}>
+        {/* Y Axis */}
+        <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", fontSize: "9px", color: "var(--muted)", paddingRight: "8px", userSelect: "none", height: "180px", textAlign: "right", width: "30px" }}>
+          {yTicks.map((tick, idx) => (
+            <span key={idx}>{tick}</span>
+          ))}
+        </div>
+
+        {/* Chart Area wrapper */}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100%" }}>
+          {/* Bars area */}
+          <div style={{ flex: 1, display: "flex", alignItems: "end", justifyContent: "space-between", height: "180px", borderLeft: "1px solid var(--line)", borderBottom: "1px solid var(--line)", pb: "4px", paddingLeft: "10px", paddingRight: "10px", position: "relative" }}>
+            {rows.map((row) => {
+              const mHeight = ((row.meetings || 0) / maxVal) * 100;
+              const tHeight = ((row.translations || 0) / maxVal) * 100;
+              
+              return (
+                <div 
+                  key={row.date} 
+                  className="group"
+                  style={{ position: "relative", display: "flex", flexDirection: "column", justifyContent: "end", alignItems: "center", gap: "3px", flex: 1, maxWidth: "28px", margin: "0 2px", height: "100%", cursor: "pointer" }}
+                >
+                  {/* Tooltip */}
+                  <div 
+                    className="tooltip-container"
+                    style={{ position: "absolute", bottom: "100%", marginBottom: "6px", background: "#1c2521", border: "1px solid var(--line)", color: "#fff", padding: "6px 8px", borderRadius: "6px", fontSize: "10px", pointerEvents: "none", zIndex: 10, width: "120px", boxShadow: "var(--shadow)", textAlign: "left" }}
+                  >
+                    <div style={{ fontWeight: "bold", borderBottom: "1px solid rgba(255,255,255,0.08)", paddingBottom: "2px", marginBottom: "4px" }}>{row.date}</div>
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <span style={{ color: "#3b82f6" }}>Meetings:</span>
+                      <span>{row.meetings || 0}</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <span style={{ color: "#8b5cf6" }}>Translations:</span>
+                      <span>{row.translations || 0}</span>
+                    </div>
+                  </div>
+
+                  {/* Stacked Bars */}
+                  <div style={{ width: "100%", display: "flex", flexDirection: "column", justifyContent: "end", height: "100%" }}>
+                    <div 
+                      style={{ height: `${tHeight}%`, background: "#8b5cf6", opacity: 0.85, borderTopLeftRadius: "2px", borderTopRightRadius: "2px", width: "100%", transition: "all 0.2s" }} 
+                    />
+                    <div 
+                      style={{ height: `${mHeight}%`, background: "#3b82f6", opacity: 0.85, borderBottomLeftRadius: "2px", borderBottomRightRadius: "2px", width: "100%", transition: "all 0.2s" }} 
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* X Axis */}
+          <div style={{ display: "flex", fontSize: "9px", color: "var(--muted)", justifyContent: "space-between", userSelect: "none", paddingTop: "6px", paddingLeft: "10px", paddingRight: "10px" }}>
+            {rows.map((row, idx) => {
+              const shouldShow = idx === 0 || idx === Math.floor(rows.length / 2) || idx === rows.length - 1;
+              return (
+                <span key={row.date} style={{ opacity: shouldShow ? 1 : 0 }}>
+                  {row.date}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function DashboardPage() {

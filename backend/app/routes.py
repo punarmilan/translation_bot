@@ -647,6 +647,18 @@ async def public_translation_settings() -> dict:
     return {"values": {key: value for key, value in values.items() if key in safe_keys}}
 
 
+@router.get("/api/public/branding")
+async def public_branding() -> dict:
+    from app.runtime_settings import runtime_settings
+    return {"branding": runtime_settings.branding_settings}
+
+
+@router.get("/api/public/page-builder")
+async def public_page_builder() -> dict:
+    from app.runtime_settings import runtime_settings
+    return {"sections": runtime_settings.landing_sections}
+
+
 @router.get("/api/public/settings")
 async def public_settings() -> dict:
     from app.runtime_settings import runtime_settings
@@ -662,6 +674,36 @@ async def public_settings() -> dict:
     }
     values = runtime_settings.general_settings
     return {"values": {key: value for key, value in values.items() if key in public_keys}}
+
+
+@router.post("/api/internal/reload-config")
+async def internal_reload_config(payload: dict | None = None) -> dict:
+    db = get_db()
+    from app.runtime_settings import runtime_settings
+    await runtime_settings.load_from_db(db)
+    
+    event_type = (payload and payload.get("event_type")) or "system_config_updated"
+    
+    broadcast_payload = {
+        "type": event_type,
+        "features": runtime_settings.feature_flags,
+        "general": runtime_settings.general_settings,
+        "branding": runtime_settings.branding_settings,
+        "landing_sections": runtime_settings.landing_sections,
+        "languages": list(runtime_settings.enabled_languages),
+        "data": payload.get("data") if payload else {}
+    }
+    
+    async with manager._lock:
+        all_sessions = []
+        for room in manager.rooms.values():
+            all_sessions.extend(list(room.sessions.values()))
+            
+    for s in all_sessions:
+        if s.connected:
+            manager._enqueue(s, json.dumps(broadcast_payload), event=event_type)
+            
+    return {"status": "ok", "message": f"Config reloaded and broadcasted event: {event_type}."}
 
 
 @router.get("/api/public/translation-modes")
@@ -868,21 +910,60 @@ async def upload_meeting_file(
     import uuid
     import time
     
+    # 1. Enforce extension checks
+    filename = file.filename or ""
+    ext = os.path.splitext(filename)[1].lower()
+    allowed_extensions = {
+        ".pdf", ".docx", ".doc", ".ppt", ".pptx",
+        ".png", ".jpg", ".jpeg", ".gif", ".webp",
+        ".mp3", ".wav", ".m4a", ".ogg",
+        ".mp4", ".webm", ".mov", ".avi"
+    }
+    if ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file format. Allowed formats: PDF, Word, PowerPoint, Images, Audio, and Video."
+        )
+        
     db = get_db()
     file_id = str(uuid.uuid4())
     room_dir = os.path.join("uploads", room_id)
     os.makedirs(room_dir, exist_ok=True)
-    file_path = os.path.join(room_dir, f"{file_id}_{file.filename}")
+    file_path = os.path.join(room_dir, f"{file_id}_{filename}")
     
-    with open(file_path, "wb") as f:
-        f.write(await file.read())
+    # 2. Enforce 25MB file size limit during chunked stream copy
+    MAX_SIZE = 25 * 1024 * 1024 # 25MB
+    size = 0
+    
+    try:
+        with open(file_path, "wb") as f:
+            while True:
+                chunk = await file.read(64 * 1024) # Read in 64KB chunks
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_SIZE:
+                    f.close()
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                    raise HTTPException(
+                        status_code=400,
+                        detail="File size exceeds the maximum limit of 25MB."
+                    )
+                f.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as e:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        raise HTTPException(status_code=500, detail=f"File write failed: {str(e)}")
         
     file_meta = {
         "file_id": file_id,
         "room_id": room_id,
-        "filename": file.filename,
+        "filename": filename,
         "content_type": file.content_type,
-        "size": os.path.getsize(file_path),
+        "size": size,
         "uploaded_by": username,
         "timestamp": time.time(),
     }
@@ -900,9 +981,9 @@ async def upload_meeting_file(
         "room_id": room_id,
         "file": {
             "file_id": file_id,
-            "filename": file.filename,
+            "filename": filename,
             "content_type": file.content_type,
-            "size": file_meta["size"],
+            "size": size,
             "uploaded_by": username,
             "timestamp": file_meta["timestamp"],
         }

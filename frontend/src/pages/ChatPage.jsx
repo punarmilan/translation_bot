@@ -244,7 +244,7 @@ function JoinForm({ user, onJoin, initialRoomId = "", languages = LANGUAGE_OPTIO
         <div className="border-t md:border-t-0 md:border-l border-white/10 pt-6 md:pt-0 md:pl-8 flex flex-col justify-between">
           <div>
             <span className="text-[10px] uppercase font-bold text-brand-accent tracking-wider">Quick Start Guide</span>
-            <h2 className="text-xl font-bold text-brand-bg mt-1 mb-4">Welcome to Translation Bot</h2>
+            <h2 className="text-xl font-bold text-brand-bg mt-1 mb-4">Welcome to VOXO</h2>
             
             <div className="space-y-4">
               <div className="flex gap-3">
@@ -299,7 +299,8 @@ function MemberCard({ member, isSelf, connected, translationStatus, connectionSt
   const handRaised = member.hand_raised;
   
   const isReconnecting = connectionState === "connecting";
-  const isDisconnected = !connected && !isSelf;
+  const isDisconnected = member.connected === false || connectionState === "disconnected";
+  const hasMediaStream = connected;
 
   return (
     <div className={`flex flex-col gap-1.5 rounded-control px-2.5 py-2.5 transition-all duration-200 hover:bg-white/[0.04] border ${
@@ -344,7 +345,14 @@ function MemberCard({ member, isSelf, connected, translationStatus, connectionSt
             <span>•</span>
             <span className="uppercase">{member.preferred_language}</span>
             {isReconnecting && <span className="text-amber-300 text-[10px] animate-pulse">Reconnecting...</span>}
-            {isDisconnected && <span className="text-red-300 text-[10px]">Disconnected</span>}
+            {isDisconnected ? (
+              <span className="text-red-400 text-[10px] font-semibold">Disconnected</span>
+            ) : (
+              <span className="text-emerald-400 text-[10px] flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                {hasMediaStream ? "Audio Connected" : "In Room"}
+              </span>
+            )}
           </div>
 
           {translationStatus && (
@@ -2042,6 +2050,18 @@ export default function ChatPage() {
           );
           return;
         }
+
+        if (
+          payload.type === "system_config_updated" ||
+          payload.type === "branding_updated" ||
+          payload.type === "theme_updated" ||
+          payload.type === "landing_updated" ||
+          payload.type === "feature_flags_updated"
+        ) {
+          window.dispatchEvent(new CustomEvent("voxo_system_config", { detail: payload }));
+          return;
+        }
+
         if (payload.type === "translation_status") {
           const message = payload.message
             ? `${payload.stage}: ${payload.message}`
@@ -2089,7 +2109,7 @@ export default function ChatPage() {
       }
       socketRef.current = null;
     };
-  }, [session, meetingPanel, rightPanelCollapsed]);
+  }, [session]);
 
   useEffect(() => {
     if (meetingPanel === "chat" && !rightPanelCollapsed) {
@@ -2301,7 +2321,7 @@ export default function ChatPage() {
         style={{ width: !leftPanelCollapsed && window.innerWidth >= 1280 ? `${leftPanelWidth}px` : undefined }}
       >
         <div className="px-5 py-5 flex-shrink-0">
-          <span className="text-base font-semibold text-brand-bg">Translation Bot</span>
+          <span className="text-base font-semibold text-brand-bg">VOXO</span>
           <p className="mt-1 truncate text-xs text-ui-subtle">Workspace / {session.roomId}</p>
         </div>
 

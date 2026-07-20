@@ -70,8 +70,17 @@ async def upload_media(
     stored_name, path = repo.destination(file.filename or "upload.bin")
     path.write_bytes(data)
     asset = await repo.create(file.filename or stored_name, stored_name, file.content_type or "application/octet-stream", len(data), checksum_for(data), str(admin["_id"]))
+    
+    width, height = None, None
+    if file.content_type and file.content_type.startswith("image/"):
+        try:
+            with Image.open(io.BytesIO(data)) as img:
+                width, height = img.size
+        except Exception:
+            pass
+
     asset["alt_text"] = alt_text
-    await repo.replace_metadata(str(asset["_id"]), {"alt_text": alt_text})
+    await repo.replace_metadata(str(asset["_id"]), {"alt_text": alt_text, "width": width, "height": height})
     await AuditRepository(get_db()).record(str(admin["_id"]), "media.upload", "media", str(asset["_id"]), {"filename": file.filename})
     return public_asset(asset)
 
@@ -92,12 +101,23 @@ async def replace_media(
     new_path.write_bytes(data)
     if old_path.exists():
         old_path.unlink()
+        
+    width, height = None, None
+    if file.content_type and file.content_type.startswith("image/"):
+        try:
+            with Image.open(io.BytesIO(data)) as img:
+                width, height = img.size
+        except Exception:
+            pass
+
     asset = await repo.replace_metadata(media_id, {
         "original_name": file.filename or existing["original_name"],
         "stored_name": stored_name,
         "content_type": file.content_type,
         "size": len(data),
         "checksum": checksum_for(data),
+        "width": width,
+        "height": height,
     })
     await AuditRepository(get_db()).record(str(admin["_id"]), "media.replace", "media", media_id)
     return public_asset(asset)

@@ -37,7 +37,7 @@ export default function LoginPage() {
         {/* Logo */}
         <div className="text-center mb-8">
           <Link to="/" className="text-lg font-semibold text-brand-bg">
-            Translation Bot
+            VOXO
           </Link>
           <p className="text-brand-bg/50 mt-2 text-sm">Welcome back</p>
         </div>

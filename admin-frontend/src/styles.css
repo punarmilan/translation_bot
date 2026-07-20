@@ -397,3 +397,13 @@ h1, h2, strong { font-family: "Manrope", "DM Sans", sans-serif; }
 .admin-log-list small { color: var(--muted); }
 .admin-log-list p { margin: 8px 0 0; color: var(--text); }
 
+.group .tooltip-container {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.group:hover .tooltip-container {
+  opacity: 1 !important;
+}
+
+

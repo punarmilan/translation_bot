@@ -10,12 +10,14 @@ export default function SystemHealthPage() {
   const [loading, setLoading] = useState(true);
   const load = () => {
     setLoading(true);
-    return getModule("system")
+    getModule("system")
       .then((payload) => { setData(payload); setMessage(""); })
       .catch((error) => setMessage(error.response?.data?.detail || "Could not load system health"))
       .finally(() => setLoading(false));
   };
-  useEffect(load, []);
+  useEffect(() => {
+    load();
+  }, []);
   const resources = [
     [Cpu, "CPU", `${data.resources.cpu_percent ?? "-"}%`],
     [MemoryStick, "RAM", `${data.resources.ram_percent ?? "-"}%`],

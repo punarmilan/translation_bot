@@ -18,7 +18,7 @@ import FAQ from "../components/landing/FAQ";
 import Footer from "../components/landing/Footer";
 import HeroSection from "../components/landing/HeroSection";
 import Navbar from "../components/landing/Navbar";
-import TestimonialCard from "../components/landing/TestimonialCard";
+import TestimonialsSection from "../components/landing/TestimonialsSection";
 import { useAuth } from "../contexts/AuthContext";
 
 const row1 = [
@@ -38,7 +38,7 @@ const row2 = [
   { title: "Screen Sharing", desc: "Present your screen to all peers.", image: "/images/hybrid-team.png", icon: Presentation },
   { title: "Admin Dashboard", desc: "Tenant organization controls.", image: "/images/dashboard_feature.png", icon: ShieldCheck },
   { title: "Multiple Languages", desc: "10+ dynamic localized languages.", image: "/images/global-meeting.png", icon: Languages },
-  { title: "Speaker Identification", desc: "Diarization attribution indexes.", image: "/images/online-classroom.png", icon: UserCheck },
+  { title: "Speaker Diarization", desc: "Speaker attribution indexes.", image: "/images/online-classroom.png", icon: UserCheck },
 ];
 
 function MarqueeCard({ title, desc, icon: Icon, image }) {
@@ -60,7 +60,7 @@ function MarqueeCard({ title, desc, icon: Icon, image }) {
 
 function DynamicShowcase() {
   return (
-    <section className="marquee-showcase-section">
+    <section className="marquee-showcase-section py-16">
       <div className="landing-shell">
         <header className="section-heading section-heading--center">
           <p className="section-eyebrow">Built for real-time collaboration</p>
@@ -91,7 +91,7 @@ function CoreBenefits() {
     <section id="benefits" className="landing-section benefits-section">
       <div className="landing-shell">
         <header className="section-heading section-heading--center">
-          <p className="section-eyebrow">Why Translation Bot</p>
+          <p className="section-eyebrow">Why VOXO</p>
           <h2>Meetings designed around human connection</h2>
         </header>
 
@@ -99,12 +99,12 @@ function CoreBenefits() {
           <div className="benefit-card">
             <div className="benefit-icon">🗣️</div>
             <h3>Speak Naturally</h3>
-            <p>No need to switch languages. Talk naturally, and the system translates your voice, captions, and chat into the native language of each participant.</p>
+            <p>No need to switch languages manually. Talk naturally, and VOXO translates your voice, captions, and chat into the native language of each participant.</p>
           </div>
           <div className="benefit-card">
             <div className="benefit-icon">🤝</div>
             <h3>Collaborate Seamlessly</h3>
-            <p>Access the whiteboard, shared notes, file sharing, and screen sharing directly in the call stage. No external extensions needed.</p>
+            <p>Access the whiteboard, shared notes, file library, and diagnostics directly in the call stage without interrupting video audio.</p>
           </div>
           <div className="benefit-card">
             <div className="benefit-icon">🔒</div>
@@ -134,39 +134,18 @@ export default function LandingPage() {
   }, []);
 
   return (
-    <div className="landing-page">
+    <div className="landing-page bg-brand-dark min-h-screen">
       <Navbar user={user} />
       <main>
         <HeroSection user={user} cms={content["landing.hero"]} />
 
-        <DynamicShowcase />
-
+        {/* Task 8: Move CoreBenefits ("Meetings designed around human connection") ABOVE DynamicShowcase */}
         <CoreBenefits />
 
-        <section className="landing-section section-band soft-section soft-section--lavender">
-          <div className="landing-shell">
-            <header className="section-heading section-heading--compact">
-              <p className="section-eyebrow">Product scenarios</p>
-              <h2>How teams use Translation Bot</h2>
-              <p>These examples are clearly labelled demo content and are not presented as customer endorsements.</p>
-            </header>
-            <div className="testimonial-grid">
-              {(content["landing.testimonials"]?.items || [
-                { initials: "DE", name: "Demo educator", role: "International classroom", quote: "Students can follow the original speaker while reading the same idea in their preferred language." },
-                { initials: "DT", name: "Demo team lead", role: "Distributed product team", quote: "Captions, chat, and voice translation stay in the same meeting instead of becoming separate tools." },
-                { initials: "DS", name: "Demo support lead", role: "Multilingual customer support", quote: "Language-aware routing makes it easier to serve customers without losing the original context." }
-              ]).map((item, idx) => (
-                <TestimonialCard
-                  key={idx}
-                  initials={item.initials || (item.name || "U")[0]}
-                  name={item.name}
-                  role={item.role}
-                  quote={item.quote}
-                />
-              ))}
-            </div>
-          </div>
-        </section>
+        <DynamicShowcase />
+
+        {/* Task 9: Premium Testimonials Section */}
+        <TestimonialsSection />
 
         <section id="faq" className="landing-section">
           <div className="landing-shell faq-layout">
@@ -183,12 +162,16 @@ export default function LandingPage() {
           <div className="landing-shell cta-section__inner">
             <div>
               <p className="section-eyebrow">Ready to start?</p>
-              <h2>Ready to Remove Language Barriers?</h2>
+              <h2>Ready to Remove Language Barriers with VOXO?</h2>
               <p>Start your first meeting today and let everyone participate in the language they know best.</p>
             </div>
             <div>
-              <Link to={user ? "/chat" : "/signup"} className="button button--primary button--large">Launch app</Link>
-              <Link to="/how-it-works" className="button button--secondary button--large">See how it works</Link>
+              <Link to={user ? "/chat" : "/signup"} className="button button--primary button--large">
+                Launch Workspace
+              </Link>
+              <Link to="/how-it-works" className="button button--secondary button--large">
+                See How It Works
+              </Link>
             </div>
           </div>
         </section>

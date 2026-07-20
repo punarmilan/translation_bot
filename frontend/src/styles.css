@@ -637,13 +637,34 @@ button:disabled {
 
 .landing-nav__menu {
   flex: 1;
+  display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 22px;
 }
 
+@media (min-width: 900px) {
+  .landing-nav__menu {
+    position: relative;
+  }
+
+  .landing-nav__links {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 26px;
+    margin: 0;
+  }
+
+  .landing-nav__actions {
+    margin-left: auto;
+  }
+}
+
 .landing-nav__links {
   gap: 21px;
-  margin-left: auto;
 }
 
 .landing-nav__links a {

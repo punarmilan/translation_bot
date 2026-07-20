@@ -4,30 +4,30 @@ import { Calendar, User, Clock, ArrowLeft, ArrowRight } from "lucide-react";
 
 const articles = {
   "why-we-built": {
-    title: "Why We Built Translation Bot",
+    title: "Why We Built VOXO",
     description: "Removing language barriers in remote collaboration while preserving privacy and security.",
     date: "July 16, 2026",
-    author: "Translation Bot Team",
+    author: "VOXO Team",
     readTime: "4 min read",
     category: "Philosophy",
     tagline: "Speak naturally, keep your data secure.",
     content: (
       <>
-        <p>Communication is the foundation of human connection, yet language differences often create walls in learning, work, and community. We built Translation Bot to break down these barriers, creating a unified space where everyone can speak, listen, and collaborate naturally in their preferred language.</p>
+        <p>Communication is the foundation of human connection, yet language differences often create walls in learning, work, and community. We built VOXO to break down these barriers, creating a unified space where everyone can speak, listen, and collaborate naturally in their preferred language.</p>
         
         <h2>The Core Problem</h2>
-        <p>Conventional video calling tools require everyone to speak the same language, or rely on slow text transcripts. Translation Bot integrates speech translation, captions, and voice-to-speech directly into the meeting stream. This allows team members, classrooms, and families to communicate naturally without a dedicated translator.</p>
+        <p>Conventional video calling tools require everyone to speak the same language, or rely on slow text transcripts. VOXO integrates speech translation, captions, and voice-to-speech directly into the meeting stream. This allows team members, classrooms, and families to communicate naturally without a dedicated translator.</p>
 
         <h2>Privacy First</h2>
-        <p>Unlike cloud translation services that send your private conversations to external networks, Translation Bot is designed to run completely self-hosted and offline. Your voice records, document uploads, and notes remain inside your private local network, ensuring absolute data security.</p>
+        <p>Unlike cloud translation services that send your private conversations to external networks, VOXO is designed to run completely self-hosted and offline. Your voice records, document uploads, and notes remain inside your private local network, ensuring absolute data security.</p>
 
         <h2>Designed for Everyone</h2>
-        <p>Whether you are a teacher hosting an international class, a business coordinating distributed teams, or family members speaking across borders, Translation Bot enables you to share a space without losing the warmth and meaning of your natural voice.</p>
+        <p>Whether you are a teacher hosting an international class, a business coordinating distributed teams, or family members speaking across borders, VOXO enables you to share a space without losing the warmth and meaning of your natural voice.</p>
       </>
     )
   },
   "how-to-use": {
-    title: "How to Use Translation Bot",
+    title: "How to Use VOXO",
     description: "A complete step-by-step guide to starting meetings, choosing languages, and using collaboration tools.",
     date: "July 15, 2026",
     author: "Support Team",
@@ -36,7 +36,7 @@ const articles = {
     tagline: "Your first multilingual call in under five minutes.",
     content: (
       <>
-        <p>Translation Bot is designed to be simple and approachable. Here is a step-by-step guide to get started with your first multilingual meeting.</p>
+        <p>VOXO is designed to be simple and approachable. Here is a step-by-step guide to get started with your first multilingual meeting.</p>
         
         <h2>Step 1: Create or Join a Meeting Room</h2>
         <p>Log into your account, enter a meeting room name, and click "Create Room". Copy the shareable room link and send it to your participants.</p>
@@ -53,7 +53,7 @@ const articles = {
     )
   },
   "whats-new": {
-    title: "What's New in Translation Bot",
+    title: "What's New in VOXO",
     description: "Review our latest improvements in whiteboard sync, file uploads, and diagnostic tools.",
     date: "July 14, 2026",
     author: "Product Team",
@@ -120,7 +120,7 @@ export default function BlogPage() {
     <MarketingPage>
       <PageHeader 
         eyebrow="Blog & updates" 
-        title="Stories and guides behind Translation Bot" 
+        title="Stories and guides behind VOXO" 
         description="Learn how to speak across barriers, explore our features, and follow our mission to make communication truly accessible."
       />
 

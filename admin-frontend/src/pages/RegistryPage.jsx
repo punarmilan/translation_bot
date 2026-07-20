@@ -15,12 +15,14 @@ export default function RegistryPage({ module, eyebrow, title, description, canC
   const [loading, setLoading] = useState(true);
   const load = () => {
     setLoading(true);
-    return getModule(module)
+    getModule(module)
       .then((data) => { setItems(data.items || []); setMessage(""); })
       .catch((error) => setMessage(error.response?.data?.detail || `Could not load ${title}`))
       .finally(() => setLoading(false));
   };
-  useEffect(load, [module]);
+  useEffect(() => {
+    load();
+  }, [module]);
 
   const save = async () => {
     const value = editing.value;

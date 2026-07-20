@@ -1,7 +1,7 @@
 import {
   Activity, BarChart3, Bell, BookOpenText, ChevronDown, CircleUserRound, Database,
-  FileClock, Gauge, Languages, LayoutDashboard, Megaphone, Menu, MessageSquareText,
-  MicVocal, Search, Settings, ShieldCheck, SlidersHorizontal, ToggleLeft, Users, Video, X,
+  FileClock, Folder, Gauge, Languages, Layers, LayoutDashboard, Megaphone, Menu, MessageSquareText,
+  MicVocal, Palette, Search, Settings, ShieldCheck, SlidersHorizontal, ToggleLeft, Users, Video, X,
 } from "lucide-react";
 import { useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -10,6 +10,9 @@ import { useAdminTheme } from "../state/AdminThemeContext";
 
 const navigation = [
   ["/admin/dashboard", LayoutDashboard, "Dashboard"],
+  ["/admin/branding", Palette, "Brand & Theme"],
+  ["/admin/page-builder", Layers, "Page Builder"],
+  ["/admin/media-library", Folder, "Media Library"],
   ["/admin/users", Users, "Users"],
   ["/admin/meetings", Video, "Meetings"],
   ["/admin/content", BookOpenText, "Content"],
@@ -40,7 +43,7 @@ export default function AdminLayout() {
   return (
     <div className="admin-app">
       <aside className={`admin-sidebar ${mobileOpen ? "is-open" : ""}`}>
-        <div className="admin-brand"><span>TB</span><div><strong>Translation Bot</strong><small>Admin Console</small></div><button onClick={() => setMobileOpen(false)} aria-label="Close navigation"><X size={18} /></button></div>
+        <div className="admin-brand"><span>VX</span><div><strong>VOXO</strong><small>Admin Console</small></div><button onClick={() => setMobileOpen(false)} aria-label="Close navigation"><X size={18} /></button></div>
         <nav aria-label="Admin navigation">
           {navigation.map(([path, Icon, label]) => (
             <NavLink key={path} to={path} onClick={() => setMobileOpen(false)} className={({ isActive }) => isActive ? "is-active" : ""}>

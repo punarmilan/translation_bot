@@ -16,13 +16,15 @@ export default function LanguagesPage() {
 
   const load = () => {
     setLoading(true);
-    return getModule("languages")
+    getModule("languages")
       .then((data) => { setItems(data.items || []); setMessage(""); })
       .catch((error) => setMessage(error.response?.data?.detail || "Could not load languages"))
       .finally(() => setLoading(false));
   };
 
-  useEffect(load, []);
+  useEffect(() => {
+    load();
+  }, []);
 
   const handleSync = async () => {
     setSyncing(true);

@@ -23,12 +23,14 @@ export default function MediaPage() {
   const [loading, setLoading] = useState(true);
   const load = () => {
     setLoading(true);
-    return getModule("media", { search })
+    getModule("media", { search })
       .then((data) => { setItems(data.items || []); setMessage(""); })
       .catch((error) => setMessage(error.response?.data?.detail || "Could not load media"))
       .finally(() => setLoading(false));
   };
-  useEffect(load, []);
+  useEffect(() => {
+    load();
+  }, []);
 
   const sendFile = async (file) => {
     const form = new FormData(); form.append("file", file); form.append("alt_text", "");
@@ -73,7 +75,7 @@ export default function MediaPage() {
     {loading ? <div className="admin-skeleton" /> : items.length === 0 ? <EmptyState title="No media uploaded" description="Upload the first asset for website content." /> :
       <section className="admin-media-grid">{items.map((item) => <article key={item.media_id}>
         <div className="admin-media-preview">{item.content_type?.startsWith("image/") ? <img src={`${import.meta.env.VITE_ADMIN_API_URL || ""}${item.url}`} alt={item.alt_text || item.original_name} /> : iconFor(item.content_type)}</div>
-        <div className="admin-media-meta"><strong>{item.original_name}</strong><small>{item.content_type} · {Math.ceil(item.size / 1024)} KB</small></div>
+        <div className="admin-media-meta"><strong>{item.original_name}</strong><small>{item.content_type} · {Math.ceil(item.size / 1024)} KB{item.width && item.height ? ` · ${item.width}x${item.height}` : ""}</small></div>
         <footer><button title="Rename or move" onClick={() => setEditing(item)}>Edit</button><button title="Replace" onClick={() => { replaceTarget.current = item; replaceRef.current?.click(); }}><RefreshCw size={14} /></button>{item.content_type?.startsWith("image/") && <><button title="Crop" onClick={() => setCropTarget(item)}><Crop size={14} /></button><button onClick={() => compress(item)}>Compress</button></>}<button className="is-danger" title="Delete" onClick={() => remove(item)}><Trash2 size={14} /></button></footer>
       </article>)}</section>}
     {editing && <div className="admin-modal-backdrop" onMouseDown={() => setEditing(null)}><section className="admin-modal" onMouseDown={(event) => event.stopPropagation()}><header><div><span>Asset metadata</span><h2>Edit media</h2></div><button onClick={() => setEditing(null)}><X /></button></header><label>File name<input value={editing.original_name || ""} onChange={(event) => setEditing({ ...editing, original_name: event.target.value })} /></label><label>Folder<input value={editing.folder || ""} onChange={(event) => setEditing({ ...editing, folder: event.target.value })} placeholder="landing, icons, docs" /></label><label>Alt text<textarea value={editing.alt_text || ""} onChange={(event) => setEditing({ ...editing, alt_text: event.target.value })} /></label><button className="admin-button admin-button--primary" onClick={saveMetadata}>Save metadata</button></section></div>}

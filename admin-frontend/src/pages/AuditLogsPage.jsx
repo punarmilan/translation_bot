@@ -37,10 +37,22 @@ export default function AuditLogsPage() {
     }
   };
 
+  const handleRollback = async (item) => {
+    if (window.confirm(`Are you sure you want to rollback version state for ${item.action}?`)) {
+      try {
+        await postAdmin("/settings/branding", { values: item.payload || {} });
+        setMessage(`Successfully rolled back state to version ${item._id || item.log_id}. Clients updated live.`);
+        load();
+      } catch (err) {
+        setMessage(`Rollback failed: ${err.message}`);
+      }
+    }
+  };
+
   return (
     <>
-      <AdminPageHeader eyebrow="Governance" title="Audit Logs" description="Immutable records of administrator authentication, content publishing, configuration, moderation, and account actions.">
-        <button className="admin-button admin-button--secondary" onClick={download}><Download size={15} />Export</button>
+      <AdminPageHeader eyebrow="Governance & Versioning" title="Audit Logs & Version History" description="Immutable records of administrator authentication, content publishing, configuration, moderation, and 1-click rollback points.">
+        <button className="admin-button admin-button--secondary" onClick={download}><Download size={15} />Export CSV</button>
         <button className="admin-button admin-button--secondary" onClick={load}><RefreshCw size={15} />Refresh</button>
       </AdminPageHeader>
       {message && <div className="admin-alert">{message}</div>}
@@ -52,13 +64,24 @@ export default function AuditLogsPage() {
       {loading ? <div className="admin-skeleton" /> : items.length === 0 ? <EmptyState title="No audit events" /> : (
         <section className="admin-timeline">
           {items.map((item) => (
-            <article key={item._id || item.log_id}>
-              <span><FileClock size={15} /></span>
-              <div>
-                <strong>{item.action}</strong>
-                <p>{item.target_type}: {item.target_id}</p>
-                <small>{item.timestamp ? new Date(item.timestamp).toLocaleString() : ""} - actor {item.actor_id}</small>
+            <article key={item._id || item.log_id} className="flex items-center justify-between">
+              <div className="flex items-start gap-3">
+                <span><FileClock size={15} /></span>
+                <div>
+                  <strong>{item.action}</strong>
+                  <p>{item.target_type}: {item.target_id}</p>
+                  <small>{item.timestamp ? new Date(item.timestamp).toLocaleString() : ""} - actor {item.actor_id}</small>
+                </div>
               </div>
+              {item.action.includes("update") && (
+                <button
+                  type="button"
+                  onClick={() => handleRollback(item)}
+                  className="px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-blue-400 border border-slate-700"
+                >
+                  Rollback State
+                </button>
+              )}
             </article>
           ))}
         </section>

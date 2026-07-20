@@ -1,9 +1,9 @@
-import { Edit3, Plus, Search, RefreshCw, X, Save } from "lucide-react";
+import { Edit3, Plus, Search, RefreshCw, X, Save, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import AdminPageHeader from "../components/AdminPageHeader";
 import EmptyState from "../components/EmptyState";
 import StatusBadge from "../components/StatusBadge";
-import { getModule, updateModuleItem, createModuleItem } from "../services/api";
+import { getModule, updateModuleItem, createModuleItem, deleteModuleItem } from "../services/api";
 import axios from "axios";
 
 export default function VoicesPage() {
@@ -100,6 +100,36 @@ export default function VoicesPage() {
     }
   };
 
+  const handleDelete = async (voice) => {
+    if (!window.confirm(`Delete voice model ${voice.name}?`)) return;
+    try {
+      await deleteModuleItem("voices", voice._id || voice.key);
+      setMessage("Voice model deleted");
+      load();
+    } catch (error) {
+      setMessage(error.response?.data?.detail || "Delete failed");
+    }
+  };
+
+  const renderVoiceSelector = (langCode, key, availableVoices) => {
+    const currentVal = routing[langCode]?.[key] || "";
+    if (availableVoices.length === 0) {
+      return <span className="admin-status admin-status--neutral">No voices available</span>;
+    }
+    if (availableVoices.length === 1) {
+      return <span className="admin-status admin-status--success">{availableVoices[0].name}</span>;
+    }
+    return (
+      <select 
+        value={currentVal} 
+        onChange={(e) => handleRoutingChange(langCode, key, e.target.value)}
+      >
+        <option value="">-- No Assignment (Fallback) --</option>
+        {availableVoices.map(v => <option key={v.key} value={v.key}>{v.name}</option>)}
+      </select>
+    );
+  };
+
   const filtered = items.filter((item) =>
     JSON.stringify(item).toLowerCase().includes(query.toLowerCase())
   );
@@ -167,6 +197,9 @@ export default function VoicesPage() {
                             })}>
                               <Edit3 size={15} />
                             </button>
+                            <button title="Delete voice model" className="is-danger" onClick={() => handleDelete(item)}>
+                              <Trash2 size={15} />
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -206,42 +239,10 @@ export default function VoicesPage() {
                     return (
                       <tr key={langCode}>
                         <td><strong>{lang.name}</strong> (<code>{langCode}</code>)</td>
-                        <td>
-                          <select 
-                            value={routing[langCode]?.auto || ""} 
-                            onChange={(e) => handleRoutingChange(langCode, "auto", e.target.value)}
-                          >
-                            <option value="">-- No Assignment (Fallback) --</option>
-                            {availableVoices.map(v => <option key={v.key} value={v.key}>{v.name}</option>)}
-                          </select>
-                        </td>
-                        <td>
-                          <select 
-                            value={routing[langCode]?.feminine || ""} 
-                            onChange={(e) => handleRoutingChange(langCode, "feminine", e.target.value)}
-                          >
-                            <option value="">-- No Assignment (Fallback) --</option>
-                            {availableVoices.map(v => <option key={v.key} value={v.key}>{v.name}</option>)}
-                          </select>
-                        </td>
-                        <td>
-                          <select 
-                            value={routing[langCode]?.masculine || ""} 
-                            onChange={(e) => handleRoutingChange(langCode, "masculine", e.target.value)}
-                          >
-                            <option value="">-- No Assignment (Fallback) --</option>
-                            {availableVoices.map(v => <option key={v.key} value={v.key}>{v.name}</option>)}
-                          </select>
-                        </td>
-                        <td>
-                          <select 
-                            value={routing[langCode]?.neutral || ""} 
-                            onChange={(e) => handleRoutingChange(langCode, "neutral", e.target.value)}
-                          >
-                            <option value="">-- No Assignment (Fallback) --</option>
-                            {availableVoices.map(v => <option key={v.key} value={v.key}>{v.name}</option>)}
-                          </select>
-                        </td>
+                        <td>{renderVoiceSelector(langCode, "auto", availableVoices)}</td>
+                        <td>{renderVoiceSelector(langCode, "feminine", availableVoices)}</td>
+                        <td>{renderVoiceSelector(langCode, "masculine", availableVoices)}</td>
+                        <td>{renderVoiceSelector(langCode, "neutral", availableVoices)}</td>
                       </tr>
                     );
                   })}

@@ -564,11 +564,14 @@ async def detect_language_profile(
 
     if (
         normalized_hint in supported_langs
-        and confidence < min_confidence
+        and (confidence < min_confidence or language not in supported_langs)
         and is_hint_compatible_with_text(text, normalized_hint)
     ):
         language = normalized_hint
         detection_source = "hint_low_confidence"
+    elif language not in supported_langs:
+        language = normalized_hint if (normalized_hint and normalized_hint in supported_langs) else "en"
+        detection_source = "unsupported_fallback"
 
     detection = LanguageDetection(
         language=language,

@@ -36,9 +36,13 @@ export default function Navbar({ user }) {
   return (
     <header className={`landing-nav ${scrolled ? "is-scrolled" : ""}`}>
       <nav className="landing-shell landing-nav__inner" aria-label="Main navigation">
-        <Link to="/" onClick={handleScrollToTop} className="brand-lockup">
-          <span className="brand-mark" aria-hidden="true">TB</span>
-          <span>Translation Bot</span>
+        <Link to="/" onClick={handleScrollToTop} className="brand-lockup group">
+          <span className="brand-mark flex items-center justify-center font-bold tracking-wider" aria-hidden="true">
+            VX
+          </span>
+          <span className="text-lg font-bold tracking-tight text-brand-bg group-hover:text-brand-accent transition-colors">
+            VOXO
+          </span>
         </Link>
 
         <button
@@ -66,15 +70,19 @@ export default function Navbar({ user }) {
             <Link to="/pricing" onClick={handlePricingClick} className={location.pathname === "/pricing" ? "is-active" : ""}>
               Pricing
             </Link>
-            <NavLink to="/help" className={({ isActive }) => isActive ? "is-active" : ""}>
-              Help Center
+            <NavLink to="/about" className={({ isActive }) => isActive ? "is-active" : ""}>
+              About
             </NavLink>
           </div>
           <div className="landing-nav__actions">
             <ThemeToggle />
-            {!user && <Link to="/login" className="button button--quiet">Sign in</Link>}
-            <Link to={user ? "/chat" : "/signup"} className="button button--primary">
-              {user ? "Open workspace" : "Get started"}
+            {!user && (
+              <Link to="/login" className="button button--quiet font-medium">
+                Sign in
+              </Link>
+            )}
+            <Link to={user ? "/chat" : "/signup"} className="button button--primary shadow-md shadow-brand-accent/20">
+              {user ? "Open Workspace" : "Get started"}
             </Link>
           </div>
         </div>

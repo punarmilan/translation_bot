@@ -13,8 +13,12 @@ export default function RolesPage() {
   const [creating, setCreating] = useState(false);
   const [newRole, setNewRole] = useState({ key: "", name: "", description: "", permissions: [] });
   const [message, setMessage] = useState("");
-  const load = () => getModule("roles").then((data) => { setRoles(data.items || []); setPermissions(data.available_permissions || []); setSelectedKey((key) => key || data.items?.[0]?.key || ""); }).catch((error) => setMessage(error.response?.data?.detail || "Could not load roles"));
-  useEffect(load, []);
+  const load = () => {
+    getModule("roles").then((data) => { setRoles(data.items || []); setPermissions(data.available_permissions || []); setSelectedKey((key) => key || data.items?.[0]?.key || ""); }).catch((error) => setMessage(error.response?.data?.detail || "Could not load roles"));
+  };
+  useEffect(() => {
+    load();
+  }, []);
   const selected = roles.find((role) => role.key === selectedKey);
   const toggle = (permission) => setRoles((current) => current.map((role) => role.key !== selectedKey ? role : { ...role, permissions: role.permissions.includes(permission) ? role.permissions.filter((item) => item !== permission) : [...role.permissions, permission] }));
   const save = async () => {

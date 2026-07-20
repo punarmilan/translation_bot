@@ -32,14 +32,16 @@ export default function ContentPage() {
 
   const load = () => {
     setLoading(true);
-    return getModule("content").then((data) => {
+    getModule("content").then((data) => {
       setItems(data.items || []);
       setSelectedKey((current) => current || data.items?.[0]?.key || "");
       setMessage("");
     }).catch((error) => setMessage(error.response?.data?.detail || "Could not load content sections"))
       .finally(() => setLoading(false));
   };
-  useEffect(load, []);
+  useEffect(() => {
+    load();
+  }, []);
   useEffect(() => setDraft(selected ? structuredClone(selected) : null), [selected]);
 
   const save = async (status) => {

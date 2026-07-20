@@ -14,7 +14,7 @@ const guides = [
 export default function DocsPage() {
   return (
     <MarketingPage>
-      <PageHeader eyebrow="Documentation" title="Build, run, test, and extend Translation Bot" description="Technical guidance for local development, meeting transport, language services, and production preparation.">
+      <PageHeader eyebrow="Documentation" title="Build, run, test, and extend VOXO" description="Technical guidance for local development, meeting transport, language services, and production preparation.">
         <Link className="button button--primary button--large" to="/how-it-works">Architecture overview</Link>
         <Link className="button button--secondary button--large" to="/help">Troubleshooting</Link>
       </PageHeader>

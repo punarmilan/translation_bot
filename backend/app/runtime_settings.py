@@ -14,6 +14,41 @@ class RuntimeSettingsManager:
             "screen_sharing": True,
             "meeting_summary": True,
             "experimental_features": False,
+            "stt": True,
+            "tts": True,
+            "whiteboard": True,
+            "files": True,
+            "meeting_notes": True,
+            "ai_summary": True,
+            "diagnostics": True,
+            "blogs": True,
+            "payments": False,
+            "invitations": True,
+            "waiting_room": True,
+            "moderator_controls": True,
+            "breakout_rooms": False,
+            "reactions": True,
+            "captions": True,
+        }
+        self.branding_settings: dict = {
+            "product_name": "VOXO",
+            "site_title": "VOXO — Real-Time Multilingual Platform",
+            "logo_url": "",
+            "favicon_url": "",
+            "og_image": "",
+            "twitter_card": "",
+            "meta_description": "Meet, speak, and collaborate in any language instantly with self-hosted AI voice translation.",
+            "seo_keywords": "multilingual meeting, voice translation, whisper stt, piper tts, self-hosted AI, webrtc",
+            "accent_color": "#3B82F6",
+            "primary_color": "#0F172A",
+            "secondary_color": "#1E293B",
+            "font_family": "Inter, system-ui, sans-serif",
+            "border_radius": "0.75rem",
+            "button_style": "glass",
+            "footer_text": "Meet, speak, and collaborate across languages.",
+            "copyright_text": "© 2026 VOXO by WorknAI Technologies India Pvt. Ltd. All rights reserved.",
+            "company_name": "WorknAI Technologies India Pvt. Ltd.",
+            "company_email": "support@worknai.tech",
         }
         self.translation_settings: dict = {
             "libretranslate_endpoint": "http://127.0.0.1:5000",
@@ -30,18 +65,19 @@ class RuntimeSettingsManager:
             "auto_play_translated_audio": True,
         }
         self.general_settings: dict = {
-            "product_name": "GiftMe Watch",
-            "support_email": "",
+            "product_name": "VOXO",
+            "support_email": "support@worknai.tech",
             "maintenance_mode": False,
             "default_language": "en",
             "meeting_retention_days": 30,
-            "site_title": "Translation Bot",
+            "site_title": "VOXO",
             "logo_url": "",
-            "theme": "light",
+            "theme": "dark",
             "email_from": "",
             "jwt_expiration_minutes": 60,
             "stun_server": "stun:stun.l.google.com:19302",
         }
+        self.landing_sections: list = []
         self.enabled_languages: set[str] = {"ar", "de", "en", "es", "fr", "hi", "it", "nl", "pt", "ru"}
 
     async def load_from_db(self, db: AsyncIOMotorDatabase) -> None:
@@ -61,6 +97,14 @@ class RuntimeSettingsManager:
             gen_doc = await db["platform_settings"].find_one({"key": "general"})
             if gen_doc and "values" in gen_doc:
                 self.general_settings.update(gen_doc["values"])
+
+            brand_doc = await db["platform_settings"].find_one({"key": "branding"})
+            if brand_doc and "values" in brand_doc:
+                self.branding_settings.update(brand_doc["values"])
+
+            sections = await db["landing_sections"].find({}).sort("order", 1).to_list(length=100)
+            if sections:
+                self.landing_sections = sections
 
             # 3. Enabled Languages
             langs = await db["platform_languages"].find({"enabled": True}).to_list(length=100)

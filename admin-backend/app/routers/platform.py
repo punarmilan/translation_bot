@@ -286,22 +286,88 @@ async def get_settings(_: Annotated[dict, Depends(require_permission("settings.r
     return {"key": "general", "values": item.get("values", defaults) if item else defaults}
 
 
+@router.get("/settings/branding")
+async def get_branding_settings(_: Annotated[dict, Depends(require_permission("settings.read"))]) -> dict:
+    defaults = {
+        "product_name": "VOXO",
+        "site_title": "VOXO — Real-Time Multilingual Platform",
+        "logo_url": "",
+        "favicon_url": "",
+        "og_image": "",
+        "twitter_card": "",
+        "meta_description": "Meet, speak, and collaborate in any language instantly with self-hosted AI voice translation.",
+        "seo_keywords": "multilingual meeting, voice translation, whisper stt, piper tts, self-hosted AI, webrtc",
+        "accent_color": "#3B82F6",
+        "primary_color": "#0F172A",
+        "secondary_color": "#1E293B",
+        "font_family": "Inter, system-ui, sans-serif",
+        "border_radius": "0.75rem",
+        "button_style": "glass",
+        "footer_text": "Meet, speak, and collaborate across languages.",
+        "copyright_text": "© 2026 VOXO by WorknAI Technologies India Pvt. Ltd. All rights reserved.",
+        "company_name": "WorknAI Technologies India Pvt. Ltd.",
+        "company_email": "support@worknai.tech",
+    }
+    item = await PlatformRepository(get_db()).get_by_key("platform_settings", "branding")
+    return {"key": "branding", "values": item.get("values", defaults) if item else defaults}
+
+
+@router.patch("/settings/branding")
+async def update_branding_settings(body: SettingsUpdate, admin: Annotated[dict, Depends(require_permission("settings.write"))]) -> dict:
+    item = await PlatformRepository(get_db()).upsert_by_key("platform_settings", "branding", {"values": body.values, "updated_by": str(admin["_id"])})
+    await AuditRepository(get_db()).record(str(admin["_id"]), "branding.update", "settings", "branding", body.values)
+    
+    # Notify main backend for live WebSocket broadcast
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            await client.post("http://127.0.0.1:8000/api/internal/reload-config", json={"event_type": "branding_updated", "branding": body.values})
+    except Exception:
+        pass
+        
+    return serialize(item)
+
+
+@router.get("/page-builder")
+async def get_page_builder_sections(_: Annotated[dict, Depends(require_permission("content.read"))]) -> dict:
+    sections = await get_db()["landing_sections"].find({}).sort("order", 1).to_list(length=100)
+    return {"items": [serialize(s) for s in sections]}
+
+
+@router.post("/page-builder")
+async def save_page_builder_sections(body: dict, admin: Annotated[dict, Depends(require_permission("content.write"))]) -> dict:
+    db = get_db()
+    sections = body.get("sections", [])
+    await db["landing_sections"].delete_many({})
+    if sections:
+        for idx, sec in enumerate(sections):
+            sec["order"] = idx
+        await db["landing_sections"].insert_many(sections)
+    
+    await AuditRepository(db).record(str(admin["_id"]), "page_builder.update", "content", "landing_page", {"count": len(sections)})
+    
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            await client.post("http://127.0.0.1:8000/api/internal/reload-config", json={"event_type": "landing_updated", "sections": sections})
+    except Exception:
+        pass
+
+    return {"status": "ok", "count": len(sections)}
+
+
 @router.patch("/settings")
 async def update_settings(body: SettingsUpdate, admin: Annotated[dict, Depends(require_permission("settings.write"))]) -> dict:
     item = await PlatformRepository(get_db()).upsert_by_key("platform_settings", "general", {"values": body.values, "updated_by": str(admin["_id"])})
     await AuditRepository(get_db()).record(str(admin["_id"]), "settings.update", "settings", "general")
     
-    # Publish Redis command for live settings synchronization
-    from app.control_plane import control_plane
-    import asyncio
-    asyncio.create_task(
-        control_plane.publish_and_wait(
-            command_type="UPDATE_SETTINGS",
-            actor_id=str(admin["_id"]),
-            actor_email=admin.get("email", ""),
-            payload={"key": "general", "values": body.values}
-        )
-    )
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            await client.post("http://127.0.0.1:8000/api/internal/reload-config", json={"event_type": "system_config_updated", "general": body.values})
+    except Exception:
+        pass
+        
     return serialize(item)
 
 

@@ -97,7 +97,7 @@ export default function SignupPage() {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <Link to="/" className="text-lg font-semibold text-brand-bg">
-            Translation Bot
+            VOXO
           </Link>
           <p className="text-brand-bg/50 mt-2 text-sm">Create your account</p>
         </div>

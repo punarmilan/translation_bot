@@ -15,7 +15,7 @@ export default function ComparisonTable() {
       <table className="comparison-table">
         <caption className="sr-only">High-level meeting platform comparison</caption>
         <thead>
-          <tr><th>Capability</th><th>Translation Bot</th><th>Google Meet</th><th>Zoom</th><th>Teams</th></tr>
+          <tr><th>Capability</th><th>VOXO</th><th>Google Meet</th><th>Zoom</th><th>Teams</th></tr>
         </thead>
         <tbody>
           {rows.map((row) => (

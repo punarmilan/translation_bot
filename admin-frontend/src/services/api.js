@@ -105,6 +105,18 @@ export async function getModule(module, params) {
   return (await api.get(`/api/admin/${module}`, { params })).data;
 }
 
+export async function fetchAdmin(path, params) {
+  return (await api.get(`/api/admin${path}`, { params })).data;
+}
+
+export async function postAdmin(path, body) {
+  return (await api.post(`/api/admin${path}`, body)).data;
+}
+
+export async function patchAdmin(path, body) {
+  return (await api.patch(`/api/admin${path}`, body)).data;
+}
+
 export async function exportAuditLogs(params) {
   return (await api.get("/api/admin/logs/export.csv", { params, responseType: "blob" })).data;
 }

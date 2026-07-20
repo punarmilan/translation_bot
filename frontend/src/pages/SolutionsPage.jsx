@@ -45,7 +45,7 @@ export default function SolutionsPage() {
   }, []);
 
   const title = content?.title || "Language access for the conversations that matter";
-  const body = content?.body || "Translation Bot adapts one meeting experience to classrooms, consultations, global teams, public services, and live events.";
+  const body = content?.body || "VOXO adapts one meeting experience to classrooms, consultations, global teams, public services, and live events.";
 
   return (
     <MarketingPage>
@@ -67,7 +67,7 @@ export default function SolutionsPage() {
                     <div><h3>How we help</h3><p>{solution}</p></div>
                   </div>
                   <div className="solution-impact"><Building2 size={18} /><span><strong>Expected impact</strong>{impact}</span></div>
-                  <Link className="button button--primary" to="/signup">Use Translation Bot</Link>
+                  <Link className="button button--primary" to="/signup">Use VOXO</Link>
                 </div>
                 <SolutionVisual Icon={Icon} image={image} title={title} />
               </article>
