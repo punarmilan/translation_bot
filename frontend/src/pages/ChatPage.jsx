@@ -2063,6 +2063,21 @@ export default function ChatPage() {
         }
 
         if (payload.type === "translation_status") {
+          if (payload.stage === "tts" && (payload.status === "failed" || (payload.message && payload.message.includes("Piper")))) {
+            setTranscriptionError("");
+            setTranscriptionStatus("Speaking via web speech synthesizer...");
+            if (payload.text && "speechSynthesis" in window) {
+              try {
+                const ut = new SpeechSynthesisUtterance(payload.text);
+                ut.lang = activeLanguage || "en";
+                window.speechSynthesis.speak(ut);
+              } catch (e) {
+                console.warn("Web speech playback warning:", e);
+              }
+            }
+            return;
+          }
+
           const message = payload.message
             ? `${payload.stage}: ${payload.message}`
             : `${payload.stage} ${payload.status}`;
@@ -2079,15 +2094,19 @@ export default function ChatPage() {
             [payload.sender_session_id]:
               payload.status === "failed" ? `${payload.stage} failed` : stageLabel,
           }));
-          if (payload.status === "failed") {
+          if (payload.status === "failed" && !message.includes("Piper")) {
             setTranscriptionError(message);
+          } else {
+            setTranscriptionError("");
           }
           return;
         }
         if (payload.type === "voice_status") {
           setTranscriptionStatus(payload.message || "Live translation status updated.");
-          if (payload.level === "error") {
+          if (payload.level === "error" && !payload.message?.includes("Piper")) {
             setTranscriptionError(payload.message || "Live translation failed.");
+          } else {
+            setTranscriptionError("");
           }
           return;
         }

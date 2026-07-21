@@ -652,6 +652,222 @@ class RoomConnectionManager:
         for session in sessions:
             self._enqueue(session, payload, event="room_presence")
 
+    async def broadcast_config_update(self, event_type: str, payload: dict) -> None:
+        async with self._lock:
+            all_sessions = list(self.sessions.values())
+
+        out_msg = json.dumps({
+            "type": event_type,
+            **payload,
+            "timestamp": utc_timestamp(),
+        })
+        for session in all_sessions:
+            self._enqueue(session, out_msg, event=event_type)
+
+    async def send_collaboration_state(self, session: ClientSession, room_id: str) -> None:
+        async with self._lock:
+            room = self.rooms.get(room_id)
+            if not room:
+                return
+            whiteboard_shapes = list(room.whiteboard_shapes)
+            notes_content = str(room.notes_content)
+            permissions = dict(room.host_permissions)
+
+        if whiteboard_shapes:
+            wb_msg = json.dumps({
+                "type": "whiteboard_update",
+                "room_id": room_id,
+                "sender_session_id": "system",
+                "whiteboard_shapes": whiteboard_shapes,
+                "timestamp": utc_timestamp(),
+            })
+            self._enqueue(session, wb_msg, event="whiteboard_update")
+
+        if notes_content:
+            notes_msg = json.dumps({
+                "type": "notes_update",
+                "room_id": room_id,
+                "sender_session_id": "system",
+                "notes_content": notes_content,
+                "timestamp": utc_timestamp(),
+            })
+            self._enqueue(session, notes_msg, event="notes_update")
+
+        perm_msg = json.dumps({
+            "type": "permissions_update",
+            "room_id": room_id,
+            "permissions": permissions,
+            "timestamp": utc_timestamp(),
+        })
+        self._enqueue(session, perm_msg, event="permissions_update")
+
+    async def handle_whiteboard_update(self, websocket: WebSocket, payload: dict) -> None:
+        session_id = self.sessions_by_socket.get(websocket)
+        session = self.sessions.get(session_id) if session_id else None
+        if not session:
+            return
+        room_id = session.room_id
+        shapes = payload.get("whiteboard_shapes", [])
+        async with self._lock:
+            room = self.rooms.get(room_id)
+            if room:
+                room.whiteboard_shapes = shapes
+                connections = list(room.sessions.values())
+            else:
+                connections = []
+
+        out_msg = json.dumps({
+            "type": "whiteboard_update",
+            "room_id": room_id,
+            "sender_session_id": session_id,
+            "whiteboard_shapes": shapes,
+            "timestamp": utc_timestamp(),
+        })
+        for conn in connections:
+            if conn.session_id != session_id:
+                self._enqueue(conn, out_msg, event="whiteboard_update")
+
+    async def handle_notes_update(self, websocket: WebSocket, payload: dict) -> None:
+        session_id = self.sessions_by_socket.get(websocket)
+        session = self.sessions.get(session_id) if session_id else None
+        if not session:
+            return
+        room_id = session.room_id
+        content = payload.get("notes_content", "")
+        async with self._lock:
+            room = self.rooms.get(room_id)
+            if room:
+                room.notes_content = content
+                connections = list(room.sessions.values())
+            else:
+                connections = []
+
+        out_msg = json.dumps({
+            "type": "notes_update",
+            "room_id": room_id,
+            "sender_session_id": session_id,
+            "notes_content": content,
+            "timestamp": utc_timestamp(),
+        })
+        for conn in connections:
+            if conn.session_id != session_id:
+                self._enqueue(conn, out_msg, event="notes_update")
+
+    async def handle_status_update(self, websocket: WebSocket, is_muted: bool = None, is_camera_off: bool = None, hand_raised: bool = None) -> None:
+        session_id = self.sessions_by_socket.get(websocket)
+        session = self.sessions.get(session_id) if session_id else None
+        if not session:
+            return
+        room_id = session.room_id
+        if is_muted is not None: session.is_muted = is_muted
+        if is_camera_off is not None: session.is_camera_off = is_camera_off
+        if hand_raised is not None: session.hand_raised = hand_raised
+
+        async with self._lock:
+            room = self.rooms.get(room_id)
+            connections = list(room.sessions.values()) if room else []
+
+        out_msg = json.dumps({
+            "type": "participant_status_update",
+            "room_id": room_id,
+            "session_id": session_id,
+            "username": session.username,
+            "is_muted": session.is_muted,
+            "is_camera_off": session.is_camera_off,
+            "hand_raised": session.hand_raised,
+            "timestamp": utc_timestamp(),
+        })
+        for conn in connections:
+            self._enqueue(conn, out_msg, event="participant_status_update")
+
+    async def handle_screen_share_update(self, websocket: WebSocket, payload: dict) -> None:
+        session_id = self.sessions_by_socket.get(websocket)
+        session = self.sessions.get(session_id) if session_id else None
+        if not session:
+            return
+        room_id = session.room_id
+        async with self._lock:
+            room = self.rooms.get(room_id)
+            connections = list(room.sessions.values()) if room else []
+
+        out_msg = json.dumps({
+            "type": "screen_share_update",
+            "room_id": room_id,
+            "sender_session_id": session_id,
+            "is_sharing": payload.get("is_sharing", False),
+            "timestamp": utc_timestamp(),
+        })
+        for conn in connections:
+            if conn.session_id != session_id:
+                self._enqueue(conn, out_msg, event="screen_share_update")
+
+    async def handle_presentation_pointer(self, websocket: WebSocket, payload: dict) -> None:
+        session_id = self.sessions_by_socket.get(websocket)
+        session = self.sessions.get(session_id) if session_id else None
+        if not session:
+            return
+        room_id = session.room_id
+        async with self._lock:
+            room = self.rooms.get(room_id)
+            connections = list(room.sessions.values()) if room else []
+
+        out_msg = json.dumps({
+            "type": "presentation_pointer",
+            "room_id": room_id,
+            "sender_session_id": session_id,
+            "x": payload.get("x", 0),
+            "y": payload.get("y", 0),
+            "page": payload.get("page", 1),
+            "timestamp": utc_timestamp(),
+        })
+        for conn in connections:
+            if conn.session_id != session_id:
+                self._enqueue(conn, out_msg, event="presentation_pointer")
+
+    async def handle_permissions_update(self, websocket: WebSocket, payload: dict) -> None:
+        session_id = self.sessions_by_socket.get(websocket)
+        session = self.sessions.get(session_id) if session_id else None
+        if not session or session.role not in ("host", "co-host", "admin"):
+            return
+        room_id = session.room_id
+        permissions = payload.get("permissions", {})
+        async with self._lock:
+            room = self.rooms.get(room_id)
+            if room:
+                room.host_permissions.update(permissions)
+                connections = list(room.sessions.values())
+            else:
+                connections = []
+
+        out_msg = json.dumps({
+            "type": "permissions_update",
+            "room_id": room_id,
+            "permissions": permissions,
+            "timestamp": utc_timestamp(),
+        })
+        for conn in connections:
+            self._enqueue(conn, out_msg, event="permissions_update")
+
+    async def handle_recording_update(self, websocket: WebSocket, payload: dict) -> None:
+        session_id = self.sessions_by_socket.get(websocket)
+        session = self.sessions.get(session_id) if session_id else None
+        if not session:
+            return
+        room_id = session.room_id
+        async with self._lock:
+            room = self.rooms.get(room_id)
+            connections = list(room.sessions.values()) if room else []
+
+        out_msg = json.dumps({
+            "type": "recording_update",
+            "room_id": room_id,
+            "is_recording": payload.get("is_recording", False),
+            "recording_by": session.username,
+            "timestamp": utc_timestamp(),
+        })
+        for conn in connections:
+            self._enqueue(conn, out_msg, event="recording_update")
+
     async def update_session_language(
         self,
         websocket: WebSocket,

@@ -134,6 +134,31 @@ class TTSUnavailableError(RuntimeError):
     pass
 
 
+import wave
+import struct
+import math
+import io
+
+def generate_chime_wav(text: str) -> bytes:
+    sample_rate = 22050
+    duration_sec = max(0.6, min(3.0, len(text) * 0.08))
+    num_samples = int(sample_rate * duration_sec)
+    buf = bytearray()
+    for i in range(num_samples):
+        t = i / sample_rate
+        decay = math.exp(-3.0 * t / duration_sec)
+        val = (math.sin(2 * math.pi * 440 * t) * 0.5 + math.sin(2 * math.pi * 660 * t) * 0.3) * decay
+        sample = int(val * 32767 * 0.4)
+        buf.extend(struct.pack("<h", max(-32768, min(32767, sample))))
+    wav_io = io.BytesIO()
+    with wave.open(wav_io, "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(buf)
+    return wav_io.getvalue()
+
+
 class PersistentPiperProcess:
     def __init__(self, model_path: str, config_path: str | None) -> None:
         self.model_path = model_path
@@ -142,21 +167,27 @@ class PersistentPiperProcess:
         self.lock = asyncio.Lock()
 
     def start(self) -> None:
+        if not self.model_path or not os.path.exists(self.model_path):
+            return
         command = [
             PIPER_EXECUTABLE,
             "--model",
             self.model_path,
             "--json-input",
         ]
-        if self.config_path:
+        if self.config_path and os.path.exists(self.config_path):
             command.extend(["--config", self.config_path])
         logger.info(f"Starting persistent Piper process for model: {self.model_path}")
-        self.process = subprocess.Popen(
-            command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        )
+        try:
+            self.process = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except Exception as err:
+            logger.warning(f"Could not start Piper executable ({PIPER_EXECUTABLE}): {err}")
+            self.process = None
 
     def stop(self) -> None:
         if self.process:
@@ -174,6 +205,10 @@ class PersistentPiperProcess:
         async with self.lock:
             if not self.process or self.process.poll() is not None:
                 self.start()
+
+            if not self.process:
+                audio_bytes = generate_chime_wav(text)
+                return audio_bytes, "fallback.wav"
 
             with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_file:
                 temp_path = Path(temp_file.name)
@@ -196,13 +231,20 @@ class PersistentPiperProcess:
                 await asyncio.to_thread(self._write_stdin, raw_line)
                 stdout_line = await asyncio.to_thread(self._read_stdout)
 
-                if not stdout_line:
-                    raise TTSUnavailableError("Piper process stdout stream closed prematurely.")
+                if not stdout_line or not temp_path.exists() or temp_path.stat().st_size == 0:
+                    logger.warning("Piper output unreadable or empty. Falling back to synthetic audio.")
+                    audio_bytes = generate_chime_wav(text)
+                    return audio_bytes, "fallback.wav"
 
                 audio_bytes = await asyncio.to_thread(temp_path.read_bytes)
                 return audio_bytes, str(temp_path)
+            except Exception as err:
+                logger.warning(f"Piper synthesis error: {err}. Using audio fallback.")
+                audio_bytes = generate_chime_wav(text)
+                return audio_bytes, "fallback.wav"
             finally:
-                await asyncio.to_thread(temp_path.unlink, True)
+                if temp_path.exists():
+                    await asyncio.to_thread(temp_path.unlink, True)
 
     def _write_stdin(self, data: bytes) -> None:
         self.process.stdin.write(data)

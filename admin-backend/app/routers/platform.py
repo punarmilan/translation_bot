@@ -54,6 +54,106 @@ ANNOUNCEMENT_DEFAULTS = [
     {"key": "welcome-banner", "name": "Welcome banner", "description": "Default inactive welcome announcement", "enabled": False, "status": "draft", "value": {"type": "banner", "title": "Welcome", "body": "Thanks for trying the multilingual meeting platform.", "starts_at": None, "ends_at": None}},
 ]
 
+DEFAULT_PAGE_SECTIONS = [
+    {
+        "key": "sec_hero",
+        "type": "hero",
+        "name": "Hero Section",
+        "hidden": False,
+        "eyebrow": "Real-Time Multilingual Communication Platform",
+        "title": "Meet, speak, and collaborate in any language instantly",
+        "body": "VOXO translates live voice, captions, and chat naturally into each listener's preferred language without cloud tracking or external API keys.",
+        "cta_text": "Get Started Free",
+        "cta_link": "/signup",
+        "secondary_cta_text": "Explore Features",
+        "secondary_cta_link": "/features",
+        "image_url": "",
+        "order": 0,
+        "cards": [
+            {"id": "card_h1", "title": "100% Self-Hosted", "description": "Offline local models", "icon": "🔒", "image_url": ""},
+            {"id": "card_h2", "title": "Sub-Second Speech", "description": "Instant S2S translation", "icon": "⚡", "image_url": ""},
+            {"id": "card_h3", "title": "Multi-Language", "description": "10+ localized languages", "icon": "🌐", "image_url": ""}
+        ]
+    },
+    {
+        "key": "sec_showcase",
+        "type": "showcase",
+        "name": "Dynamic Marquee Showcase",
+        "hidden": False,
+        "eyebrow": "Built for real-time collaboration",
+        "title": "Powering multilingual meetings anywhere",
+        "body": "Every tool is designed to work fully offline on local setups, preserving security and privacy.",
+        "order": 1,
+        "cards": [
+            {"id": "card_s1", "title": "Live Translation", "description": "Translate text conversations instantaneously.", "icon": "Languages", "image_url": "/images/translation_feature.png"},
+            {"id": "card_s2", "title": "AI Meeting Notes", "description": "Automated takeaway summaries.", "icon": "Sparkles", "image_url": "/images/notes_feature.png"},
+            {"id": "card_s3", "title": "Whiteboard", "description": "Interactive shared drawing canvas.", "icon": "Presentation", "image_url": "/images/whiteboard_feature.png"},
+            {"id": "card_s4", "title": "File Sharing", "description": "Send documents inside rooms.", "icon": "Link2", "image_url": "/images/global-meeting.png"},
+            {"id": "card_s5", "title": "Meeting Recording", "description": "Record meetings for replay.", "icon": "Video", "image_url": "/images/hybrid-team.png"},
+            {"id": "card_s6", "title": "Voice Translation", "description": "Real-time speech-to-speech.", "icon": "AudioLines", "image_url": "/images/translation_feature.png"}
+        ]
+    },
+    {
+        "key": "sec_benefits",
+        "type": "benefits",
+        "name": "Core Benefits (Why VOXO)",
+        "hidden": False,
+        "eyebrow": "Why VOXO",
+        "title": "Meetings designed around human connection",
+        "body": "Speak naturally, collaborate seamlessly, and keep voice data self-hosted.",
+        "order": 2,
+        "cards": [
+            {"id": "card_b1", "title": "Speak Naturally", "description": "No need to switch languages manually. Talk naturally, and VOXO translates your voice into native audio.", "icon": "🗣️", "image_url": ""},
+            {"id": "card_b2", "title": "Collaborate Seamlessly", "description": "Access whiteboard, shared notes, file library, and diagnostics directly in the call stage.", "icon": "🤝", "image_url": ""},
+            {"id": "card_b3", "title": "Self-Hosted & Private", "description": "Enjoy 100% offline deployment. Voice data and records never leave your local infrastructure.", "icon": "🔒", "image_url": ""}
+        ]
+    },
+    {
+        "key": "sec_testimonials",
+        "type": "testimonials",
+        "name": "Executive Testimonials",
+        "hidden": False,
+        "eyebrow": "Proven Impact",
+        "title": "Trusted by teams communicating across borders",
+        "body": "See how leaders use VOXO to bridge languages in education, business, and healthcare.",
+        "order": 3,
+        "cards": [
+            {"id": "card_t1", "title": "Global Logistics Leader", "description": "VOXO allowed our cross-border dispatchers and drivers to communicate seamlessly in 6 languages.", "author": "Elena Rostova", "role": "Head of Operations", "avatar": ""},
+            {"id": "card_t2", "title": "International University", "description": "Our lectures are now broadcast with live translated captions into Hindi, Spanish, and French simultaneously.", "author": "Dr. Aris Thorne", "role": "Dean of Digital Education", "avatar": ""}
+        ]
+    },
+    {
+        "key": "sec_faq",
+        "type": "faq",
+        "name": "FAQ Section",
+        "hidden": False,
+        "eyebrow": "FAQ",
+        "title": "Questions before your first meeting",
+        "body": "Practical answers about setup, languages, and security.",
+        "order": 4,
+        "cards": [
+            {"id": "faq_1", "title": "Do I need to translate anything manually?", "description": "No. VOXO automatically detects spoken voice and text chat, translating them instantly into your preferred language in real time.", "question": "Do I need to translate anything manually?", "answer": "No. VOXO automatically detects spoken voice and text chat, translating them instantly into your preferred language in real time."},
+            {"id": "faq_2", "title": "Which languages can I choose?", "description": "VOXO supports 10+ major languages including English, Hindi, German, Spanish, French, Arabic, Dutch, Italian, Portuguese, and Russian.", "question": "Which languages can I choose?", "answer": "VOXO supports 10+ major languages including English, Hindi, German, Spanish, French, Arabic, Dutch, Italian, Portuguese, and Russian."},
+            {"id": "faq_3", "title": "Can I message one participant privately?", "description": "Yes. Private direct messaging is available alongside global room chat.", "question": "Can I message one participant privately?", "answer": "Yes. Private direct messaging is available alongside global room chat."},
+            {"id": "faq_4", "title": "Can I invite someone with a link?", "description": "Yes. Simply click the 'Share Meeting' button to copy your room's direct invitation link.", "question": "Can I invite someone with a link?", "answer": "Yes. Simply click the 'Share Meeting' button to copy your room's direct invitation link."},
+            {"id": "faq_5", "title": "Does it work on mobile?", "description": "Yes! VOXO's web app is fully responsive and runs on modern iOS Safari and Android Chrome browsers.", "question": "Does it work on mobile?", "answer": "Yes! VOXO's web app is fully responsive and runs on modern iOS Safari and Android Chrome browsers."}
+        ]
+    },
+    {
+        "key": "sec_cta",
+        "type": "cta",
+        "name": "Bottom CTA Banner",
+        "hidden": False,
+        "eyebrow": "Ready to start?",
+        "title": "Ready to Remove Language Barriers with VOXO?",
+        "body": "Start your first meeting today and let everyone participate in the language they know best.",
+        "cta_text": "Launch Workspace",
+        "cta_link": "/signup",
+        "order": 5,
+        "cards": []
+    }
+]
+
 
 class ContentUpdate(BaseModel):
     content: dict[str, Any]
@@ -318,19 +418,31 @@ async def update_branding_settings(body: SettingsUpdate, admin: Annotated[dict, 
     await AuditRepository(get_db()).record(str(admin["_id"]), "branding.update", "settings", "branding", body.values)
     
     # Notify main backend for live WebSocket broadcast
-    import httpx
     try:
-        async with httpx.AsyncClient(timeout=2.0) as client:
+        import httpx
+        async with httpx.AsyncClient(timeout=3.0) as client:
             await client.post("http://127.0.0.1:8000/api/internal/reload-config", json={"event_type": "branding_updated", "branding": body.values})
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"Warning: could not notify main backend of reload: {exc}")
         
     return serialize(item)
 
 
 @router.get("/page-builder")
 async def get_page_builder_sections(_: Annotated[dict, Depends(require_permission("content.read"))]) -> dict:
-    sections = await get_db()["landing_sections"].find({}).sort("order", 1).to_list(length=100)
+    db = get_db()
+    sections = await db["landing_sections"].find({}).sort("order", 1).to_list(length=100)
+    if not sections:
+        for idx, sec in enumerate(DEFAULT_PAGE_SECTIONS):
+            sec["order"] = idx
+            await db["landing_sections"].insert_one(dict(sec))
+        sections = await db["landing_sections"].find({}).sort("order", 1).to_list(length=100)
+    else:
+        for s in sections:
+            if not s.get("cards"):
+                match_def = next((d for d in DEFAULT_PAGE_SECTIONS if d["key"] == s.get("key") or d["type"] == s.get("type")), None)
+                if match_def and match_def.get("cards"):
+                    s["cards"] = match_def["cards"]
     return {"items": [serialize(s) for s in sections]}
 
 
@@ -340,18 +452,22 @@ async def save_page_builder_sections(body: dict, admin: Annotated[dict, Depends(
     sections = body.get("sections", [])
     await db["landing_sections"].delete_many({})
     if sections:
+        clean_sections = []
         for idx, sec in enumerate(sections):
-            sec["order"] = idx
-        await db["landing_sections"].insert_many(sections)
+            item = dict(sec)
+            item.pop("_id", None)
+            item["order"] = idx
+            clean_sections.append(item)
+        await db["landing_sections"].insert_many(clean_sections)
     
     await AuditRepository(db).record(str(admin["_id"]), "page_builder.update", "content", "landing_page", {"count": len(sections)})
     
-    import httpx
     try:
-        async with httpx.AsyncClient(timeout=2.0) as client:
+        import httpx
+        async with httpx.AsyncClient(timeout=3.0) as client:
             await client.post("http://127.0.0.1:8000/api/internal/reload-config", json={"event_type": "landing_updated", "sections": sections})
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"Warning: could not notify main backend of reload: {exc}")
 
     return {"status": "ok", "count": len(sections)}
 

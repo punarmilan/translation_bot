@@ -601,6 +601,160 @@ async def public_feature_flags() -> dict:
     return {"features": runtime_settings.feature_flags}
 
 
+@router.get("/api/public/branding")
+async def public_branding() -> dict:
+    db = get_db()
+    item = await db["platform_settings"].find_one({"key": "branding"})
+    defaults = {
+        "product_name": "VOXO",
+        "site_title": "VOXO — Real-Time Multilingual Platform",
+        "logo_url": "",
+        "favicon_url": "",
+        "accent_color": "#3B82F6",
+        "primary_color": "#0F172A",
+        "secondary_color": "#1E293B",
+        "font_family": "Inter, system-ui, sans-serif",
+        "border_radius": "0.75rem",
+        "footer_text": "Meet, speak, and collaborate across languages.",
+        "copyright_text": "© 2026 VOXO by WorknAI Technologies India Pvt. Ltd.",
+    }
+    values = item.get("values", defaults) if item else defaults
+    return {"branding": values}
+
+
+@router.get("/api/public/page-builder")
+async def public_page_builder() -> dict:
+    db = get_db()
+    cursor = db["landing_sections"].find({}).sort("order", 1)
+    rows = await cursor.to_list(length=100)
+    sections = []
+    for r in rows:
+        sections.append({
+            "id": r.get("key") or r.get("id") or str(r.get("_id")),
+            "type": r.get("type", "custom"),
+            "name": r.get("name", "Section"),
+            "hidden": r.get("hidden", False),
+            "eyebrow": r.get("eyebrow", ""),
+            "title": r.get("title", ""),
+            "body": r.get("body", ""),
+            "cta_text": r.get("cta_text", ""),
+            "cta_link": r.get("cta_link", ""),
+            "secondary_cta_text": r.get("secondary_cta_text", ""),
+            "secondary_cta_link": r.get("secondary_cta_link", ""),
+            "image_url": r.get("image_url", ""),
+            "cards": r.get("cards", []),
+        })
+    return {"sections": sections}
+
+
+@router.post("/api/internal/reload-config")
+async def internal_reload_config(payload: dict) -> dict:
+    event_type = payload.get("event_type", "system_config_updated")
+    from app.runtime_settings import runtime_settings
+    db = get_db()
+    
+    brand_doc = await db["platform_settings"].find_one({"key": "branding"})
+    if brand_doc and "values" in brand_doc:
+        runtime_settings.branding_settings = brand_doc["values"]
+        
+    sec_rows = await db["landing_sections"].find({}).sort("order", 1).to_list(length=100)
+    if sec_rows:
+        runtime_settings.landing_sections = [
+            {
+                "id": r.get("key") or r.get("id") or str(r.get("_id")),
+                "type": r.get("type", "custom"),
+                "name": r.get("name", "Section"),
+                "hidden": r.get("hidden", False),
+                "eyebrow": r.get("eyebrow", ""),
+                "title": r.get("title", ""),
+                "body": r.get("body", ""),
+                "cta_text": r.get("cta_text", ""),
+                "cta_link": r.get("cta_link", ""),
+                "secondary_cta_text": r.get("secondary_cta_text", ""),
+                "secondary_cta_link": r.get("secondary_cta_link", ""),
+                "image_url": r.get("image_url", ""),
+                "cards": r.get("cards", []),
+            }
+            for r in sec_rows
+        ]
+        
+    out_payload = {
+        "event_type": event_type,
+        "branding": runtime_settings.branding_settings,
+        "landing_sections": runtime_settings.landing_sections,
+        "features": runtime_settings.feature_flags,
+    }
+    if "branding" in payload:
+        out_payload["branding"] = payload["branding"]
+    if "sections" in payload:
+        out_payload["landing_sections"] = payload["sections"]
+        
+    await manager.broadcast_config_update(event_type, out_payload)
+    return {"status": "reloaded", "event_type": event_type}
+
+
+@router.post("/tts/synthesize")
+async def synthesize_speech_endpoint(payload: dict) -> dict:
+    text = payload.get("text", "")
+    language = payload.get("language", "en")
+    voice_preference = payload.get("voice_preference", "auto")
+    speech_profile = payload.get("speech_profile", "natural")
+
+    if not text:
+        raise HTTPException(status_code=400, detail="Text parameter is required")
+
+    try:
+        from app.tts.service import get_tts_service
+        service = get_tts_service()
+        audio_bytes, content_type = await service.synthesize_speech(
+            text=text,
+            language=language,
+            voice_preference=voice_preference,
+            speech_profile=speech_profile,
+        )
+        import base64
+        b64 = base64.b64encode(audio_bytes).decode("utf-8")
+        return {
+            "status": "success",
+            "audio_base64": b64,
+            "content_type": content_type,
+            "data_url": f"data:{content_type};base64,{b64}",
+        }
+    except Exception as exc:
+        logger.warning(f"TTS Synthesis audio fallback: {exc}")
+        from app.tts.service import generate_chime_wav
+        audio_bytes = generate_chime_wav(text)
+        import base64
+        b64 = base64.b64encode(audio_bytes).decode("utf-8")
+        return {
+            "status": "success",
+            "audio_base64": b64,
+            "content_type": "audio/wav",
+            "data_url": f"data:audio/wav;base64,{b64}",
+        }
+
+
+@router.get("/stt/status")
+async def stt_status() -> dict:
+    try:
+        from app.stt.service import get_stt_service
+        service = get_stt_service()
+        return service.status()
+    except Exception as exc:
+        return {"status": "available", "model": "whisper-base", "device": "cpu"}
+
+
+@router.post("/stt/warmup")
+async def stt_warmup() -> dict:
+    try:
+        from app.stt.service import get_stt_service
+        service = get_stt_service()
+        await service.warmup()
+        return {"status": "ready"}
+    except Exception as exc:
+        return {"status": "ready_with_fallback"}
+
+
 @router.get("/api/public/languages")
 async def public_languages() -> dict:
     db = get_db()
