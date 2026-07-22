@@ -1,5 +1,6 @@
 import React from "react";
 import { Star, Quote, Award } from "lucide-react";
+import { resolveImageUrl } from "../../services/api";
 
 const defaultTestimonials = [
   {
@@ -29,7 +30,7 @@ const defaultTestimonials = [
   {
     quote: "The interactive diagnostics panel and whiteboard collaboration make sprint planning effortless across our European and Asian product hubs.",
     author: "Sarah Lin",
-    role: "Head of Product Operations",
+    role: "Sarah Lin",
     company: "OmniTech Ventures",
     avatar: "https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&q=80&w=200",
     rating: 5,
@@ -49,7 +50,7 @@ export default function TestimonialsSection({ data }) {
         author: c.author || c.title || c.question || "Verified User",
         role: c.role || c.subtitle || "Leader",
         company: c.company || "Enterprise Partner",
-        avatar: c.image_url || c.avatar || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=200",
+        avatar: resolveImageUrl(c.image_url) || c.avatar || "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=200",
         rating: c.rating || 5,
       }))
     : defaultTestimonials;

@@ -79,9 +79,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+
 app.include_router(auth_router)
 app.include_router(auth_router, prefix="/api", include_in_schema=False)
 app.include_router(websocket_router)
+
+# Mount admin media folder so user frontend can fetch dynamic assets
+media_root = Path("../admin-backend/uploads/media").resolve()
+if media_root.exists():
+    app.mount("/admin-media", StaticFiles(directory=media_root), name="admin-media")
 
 
 @app.get("/")

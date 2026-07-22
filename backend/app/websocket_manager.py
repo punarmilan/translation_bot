@@ -1565,8 +1565,7 @@ class RoomConnectionManager:
                 # 3. Deliver TTS Audio if needed
                 audio_receivers = [
                     r for r in receivers
-                    if r.session_id != sender.session_id
-                    and realtime_translation_service.should_send_translated_audio(r.listener_mode)
+                    if realtime_translation_service.should_send_translated_audio(r.listener_mode)
                     and result.target_language != source_language
                     and result.translated.strip()
                     and result.status == "success"
@@ -1584,7 +1583,6 @@ class RoomConnectionManager:
                         stt_latency_ms=stt_result.latency_ms,
                         translation_latency_ms=translation_latency,
                         transcript=transcript,
-                        duration_seconds=stt_result.duration_seconds,
                     )
 
             # Group receivers by normalize_language(receiver.preferred_language)
@@ -1636,7 +1634,6 @@ class RoomConnectionManager:
         stt_latency_ms: int,
         translation_latency_ms: int,
         transcript: str,
-        duration_seconds: float,
     ) -> None:
         active_receivers = [receiver for receiver in receivers if receiver.connected]
         if not active_receivers:

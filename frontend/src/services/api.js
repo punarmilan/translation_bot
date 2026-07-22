@@ -132,3 +132,11 @@ export async function getPublicContent() {
   return data;
 }
 
+export function resolveImageUrl(url) {
+  if (!url) return "";
+  if (url.startsWith("/admin-media/")) {
+    return `${BASE_URL}${url}`;
+  }
+  return url;
+}
+

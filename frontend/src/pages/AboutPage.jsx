@@ -40,21 +40,19 @@ export default function AboutPage() {
         <div className="flex items-center gap-3 mt-4">
           <button
             onClick={() => setActiveTab("about")}
-            className={`px-4 py-2 rounded-control text-xs font-semibold transition ${
-              activeTab === "about"
+            className={`px-4 py-2 rounded-control text-xs font-semibold transition ${activeTab === "about"
                 ? "bg-brand-accent text-white shadow-md"
                 : "bg-white/[0.04] text-ui-muted hover:text-brand-bg"
-            }`}
+              }`}
           >
             About VOXO
           </button>
           <button
             onClick={() => setActiveTab("help")}
-            className={`px-4 py-2 rounded-control text-xs font-semibold transition ${
-              activeTab === "help"
+            className={`px-4 py-2 rounded-control text-xs font-semibold transition ${activeTab === "help"
                 ? "bg-brand-accent text-white shadow-md"
                 : "bg-white/[0.04] text-ui-muted hover:text-brand-bg"
-            }`}
+              }`}
           >
             Help Centre & FAQ
           </button>

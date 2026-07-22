@@ -71,13 +71,16 @@ const capabilities = [
   [Sparkles, "AI summaries", "Turn completed meetings into concise decisions and follow-ups.", "Reduces manual note taking.", "Coming soon."],
 ];
 
-function CapabilityCard({ item }) {
+function CapabilityCard({ item, index }) {
   const [Icon, title, description, why, use] = item;
+  const isLarge = index % 5 === 0;
   return (
-    <article className="capability-card">
-      <span className="feature-icon"><Icon size={21} strokeWidth={1.7} /></span>
-      <h3>{title}</h3>
-      <p>{description}</p>
+    <article className={`capability-card ${isLarge ? "capability-card--large" : ""}`}>
+      <div className="capability-card__header">
+        <span className="feature-icon"><Icon size={21} strokeWidth={1.7} /></span>
+        <h3>{title}</h3>
+        <p>{description}</p>
+      </div>
       <dl>
         <div><dt>Why it matters</dt><dd>{why}</dd></div>
         <div><dt>Use cases</dt><dd>{use}</dd></div>
@@ -134,7 +137,7 @@ export default function FeaturesPage() {
       <section className="marketing-section soft-section soft-section--blue">
         <div className="landing-shell">
           <SectionTitle eyebrow="Complete capability catalog" title="The supporting system behind every meeting" description="Current, coming-soon, and future capabilities are labelled clearly." />
-          <div className="capability-grid">{capabilities.map((item) => <CapabilityCard key={item[1]} item={item} />)}</div>
+          <div className="capability-grid">{capabilities.map((item, idx) => <CapabilityCard key={item[1]} item={item} index={idx} />)}</div>
         </div>
       </section>
       <CTASection />

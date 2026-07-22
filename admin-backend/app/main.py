@@ -44,8 +44,20 @@ class AdminOriginMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         if request.url.path.startswith("/api/admin") and request.method not in {"GET", "HEAD", "OPTIONS"}:
             origin = request.headers.get("origin")
+            referer = request.headers.get("referer")
+            
+            # Fallback to Referer netloc if Origin header is missing
+            if not origin and referer:
+                from urllib.parse import urlparse
+                parsed = urlparse(referer)
+                origin = f"{parsed.scheme}://{parsed.netloc}"
+                
+            # If both headers are missing or origin is untrusted:
             if not origin or origin not in get_settings().frontend_origins:
-                return JSONResponse({"detail": "Untrusted or missing admin origin"}, status_code=403)
+                return JSONResponse(
+                    {"detail": "Untrusted, missing, or cross-origin admin request (CSRF check failed)"},
+                    status_code=403
+                )
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getPublicContent } from "../services/api";
+import { getPublicContent, resolveImageUrl } from "../services/api";
 import { useConfig } from "../contexts/ConfigContext";
 import {
   AudioLines,
@@ -45,7 +45,7 @@ const row2 = [
 function MarqueeCard({ title, desc, description, icon: Icon, image, image_url, icon }) {
   const displayTitle = title;
   const displayDesc = description || desc;
-  const displayImage = image_url || image;
+  const displayImage = resolveImageUrl(image_url || image);
 
   return (
     <article className="marquee-card">
@@ -168,7 +168,7 @@ function CustomSectionBlock({ data }) {
               <div key={card.id || idx} className="p-6 rounded-2xl bg-white/[0.03] border border-white/10 flex flex-col justify-between">
                 <div>
                   {card.image_url ? (
-                    <img src={card.image_url} alt={card.title} className="w-full h-40 object-cover rounded-xl mb-4" />
+                    <img src={resolveImageUrl(card.image_url)} alt={card.title} className="w-full h-40 object-cover rounded-xl mb-4" />
                   ) : (
                     <div className="text-3xl mb-3">{card.icon || "✨"}</div>
                   )}

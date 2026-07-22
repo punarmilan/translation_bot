@@ -7,7 +7,7 @@ const ConfigContext = createContext({
   featureFlags: {},
   sections: [],
   loading: true,
-  refetchConfig: () => {},
+  refetchConfig: () => { },
 });
 
 export function ConfigProvider({ children }) {

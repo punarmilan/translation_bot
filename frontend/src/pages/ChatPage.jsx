@@ -2882,9 +2882,12 @@ export default function ChatPage() {
             </button>
 
             <button
-              onClick={leaveAudioCall}
-              className="ml-2 px-4 py-2 bg-ui-danger hover:bg-ui-danger/90 text-white text-xs font-semibold rounded-lg transition flex items-center gap-1.5 focus:outline-none"
-              title="Leave Room Call"
+              onClick={leaveRoom}
+              className="ml-2 px-4 py-2 text-white text-xs font-semibold rounded-lg transition flex items-center gap-1.5 focus:outline-none"
+              style={{ backgroundColor: "#ef4444", border: "1px solid #ef4444" }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "#dc2626"}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "#ef4444"}
+              title="Leave Room"
             >
               <LogOut size={14} />
               <span className="hidden sm:inline">Leave</span>
