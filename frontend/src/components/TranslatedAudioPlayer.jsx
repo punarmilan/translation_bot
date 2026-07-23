@@ -44,23 +44,23 @@ export default function TranslatedAudioPlayer({
         playingRef.current = false;
         currentAudioRef.current = null;
         setStatus("");
-        onPlaybackStateChange?.(item, false);
+        onPlaybackStateChange?.(item, false, { status: "ended" });
         playNext();
       };
       audio.onerror = () => {
         playingRef.current = false;
         currentAudioRef.current = null;
         setStatus("Translated audio playback failed.");
-        onPlaybackStateChange?.(item, false);
+        onPlaybackStateChange?.(item, false, { status: "playback_failed" });
         playNext();
       };
 
       try {
         await audio.play();
-      } catch {
+      } catch (error) {
         playingRef.current = false;
         currentAudioRef.current = null;
-        onPlaybackStateChange?.(item, false);
+        onPlaybackStateChange?.(item, false, { status: "autoplay_blocked", error: error?.message });
         setStatus("Click in the page once to allow translated audio playback.");
       }
     };

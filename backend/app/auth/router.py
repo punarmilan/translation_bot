@@ -101,6 +101,19 @@ class SignupRequest(BaseModel):
         return cleaned or None
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        return value.lower().strip()
+
+
+class ForgotPasswordResponse(BaseModel):
+    message: str
+
+
 class LoginRequest(BaseModel):
     email: str = Field(min_length=3, max_length=254)
     password: str = Field(min_length=1, max_length=128)
@@ -239,6 +252,21 @@ async def signup(body: SignupRequest) -> SignupResponse:
     return SignupResponse(**public_user_for(user))
 
 
+@router.post("/forgot-password", response_model=ForgotPasswordResponse)
+async def forgot_password(body: ForgotPasswordRequest) -> ForgotPasswordResponse:
+    db = get_db()
+    repo = UserRepository(db)
+    user = await repo.get_by_email(body.email)
+    if user:
+        await db["password_reset_requests"].insert_one({
+            "user_id": user["_id"],
+            "email": body.email,
+            "created_at": datetime.utcnow(),
+            "status": "requested",
+        })
+    return ForgotPasswordResponse(message="If an account exists for this email, a reset request has been recorded.")
+
+
 @router.post("/login", response_model=AuthResponse)
 async def login(body: LoginRequest, request: Request) -> AuthResponse:
     client_ip = request.client.host if request.client else "127.0.0.1"
@@ -328,5 +356,6 @@ async def update_me(
     if not updated:
         raise HTTPException(status_code=404, detail="User not found")
     return public_user_for(updated)
+
 
 

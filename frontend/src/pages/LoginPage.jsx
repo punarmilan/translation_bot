@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import { parseApiError } from "../services/api";
+import { forgotPassword, parseApiError } from "../services/api";
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -10,9 +10,11 @@ export default function LoginPage() {
   const [form, setForm] = useState({ email: "", password: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [resetMessage, setResetMessage] = useState("");
 
   const handleChange = (e) => {
     if (error) setError("");
+    if (resetMessage) setResetMessage("");
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
   };
 
@@ -28,6 +30,20 @@ export default function LoginPage() {
       setError(parseApiError(err) || "Login failed. Please try again.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!form.email) {
+      setError("Enter your email first, then click forgot password.");
+      return;
+    }
+    setError("");
+    try {
+      const data = await forgotPassword(form.email);
+      setResetMessage(data.message || "Reset request recorded.");
+    } catch (err) {
+      setError(parseApiError(err) || "Could not request password reset.");
     }
   };
 
@@ -47,6 +63,12 @@ export default function LoginPage() {
           className="rounded-panel border border-white/[0.06] bg-brand-mid p-8 shadow-panel"
         >
           <h1 className="text-xl font-semibold text-brand-bg mb-6">Sign in to your account</h1>
+
+          {resetMessage && (
+            <div role="status" className="mb-5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 px-4 py-3 text-sm text-emerald-200">
+              {resetMessage}
+            </div>
+          )}
 
           {error && (
             <div
@@ -89,6 +111,15 @@ export default function LoginPage() {
           </label>
 
           <button
+            type="button"
+            onClick={handleForgotPassword}
+            disabled={loading}
+            className="mb-4 text-xs font-medium text-brand-accent hover:underline"
+          >
+            Forgot password?
+          </button>
+
+          <button
             type="submit"
             disabled={loading}
             className="w-full rounded-control bg-brand-accent py-3 text-sm font-semibold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
@@ -110,3 +141,4 @@ export default function LoginPage() {
     </div>
   );
 }
+

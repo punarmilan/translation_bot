@@ -279,6 +279,8 @@ class TranslatedTranscriptMessage(BaseModel):
     translation_status: str
     translation_error: str | None = None
     confidence: float = 0.95
+    tts_status: str = "not_requested"
+    tts_skip_reason: str | None = None
 
     @classmethod
     def create(
@@ -298,6 +300,8 @@ class TranslatedTranscriptMessage(BaseModel):
         translation_status: str,
         translation_error: str | None = None,
         confidence: float = 0.95,
+        tts_status: str = "not_requested",
+        tts_skip_reason: str | None = None,
     ) -> "TranslatedTranscriptMessage":
         return cls(
             room_id=room_id,
@@ -316,6 +320,8 @@ class TranslatedTranscriptMessage(BaseModel):
             translation_status=translation_status,
             translation_error=translation_error,
             confidence=confidence,
+            tts_status=tts_status,
+            tts_skip_reason=tts_skip_reason,
         )
 
 

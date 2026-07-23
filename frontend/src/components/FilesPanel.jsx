@@ -17,10 +17,11 @@ export default function FilesPanel({
   sessionId,
   username,
   socket,
+  initialFiles = [],
   currentUserRole,
   allowUploads = true,
 }) {
-  const [files, setFiles] = useState([]);
+  const [files, setFiles] = useState(initialFiles || []);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [dragOver, setDragOver] = useState(false);
@@ -42,27 +43,14 @@ export default function FilesPanel({
   };
 
   useEffect(() => {
+    setFiles(initialFiles || []);
+  }, [initialFiles]);
+
+  useEffect(() => {
     fetchFiles();
   }, [roomId]);
 
-  // WebSocket Listener for new file events or deletions
-  useEffect(() => {
-    if (!socket) return;
-    const handleWsMessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.room_id === roomId) {
-          if (data.type === "file_uploaded" || data.type === "file_deleted") {
-            fetchFiles();
-          }
-        }
-      } catch (err) {
-        // Silent error
-      }
-    };
-    socket.addEventListener("message", handleWsMessage);
-    return () => socket.removeEventListener("message", handleWsMessage);
-  }, [socket, roomId]);
+
 
   const handleUpload = async (selectedFile) => {
     if (!selectedFile || !allowUploads) return;

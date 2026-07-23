@@ -106,6 +106,10 @@ class ClientSession:
         default_factory=lambda: asyncio.Queue(maxsize=VOICE_CHUNK_QUEUE_MAX_SIZE)
     )
     voice_worker_task: asyncio.Task[None] | None = None
+    connected_at: str = field(default_factory=utc_timestamp)
+    last_seen_at: str = field(default_factory=utc_timestamp)
+    connected_at: str = field(default_factory=utc_timestamp)
+    last_seen_at: str = field(default_factory=utc_timestamp)
 
 
 @dataclass
@@ -603,7 +607,7 @@ class RoomConnectionManager:
                         source_language=source_language,
                         target_language=target,
                         transcript=text,
-                        translated_text=result.translated,
+                        translated_text=translated_text,
                         latency_ms=0,
                         cache_hit=result.cache_hit,
                         voice_model=None,
@@ -664,7 +668,33 @@ class RoomConnectionManager:
         for session in all_sessions:
             self._enqueue(session, out_msg, event=event_type)
 
+    async def _list_room_files(self, room_id: str) -> list[dict]:
+        try:
+            db = get_db()
+            cursor = db["files"].find({"room_id": room_id}).sort("timestamp", -1)
+            files: list[dict] = []
+            async for doc in cursor:
+                files.append({
+                    "file_id": doc.get("file_id"),
+                    "filename": doc.get("filename", ""),
+                    "content_type": doc.get("content_type", ""),
+                    "size": doc.get("size", 0),
+                    "uploaded_by": doc.get("uploaded_by", ""),
+                    "timestamp": doc.get("timestamp", 0),
+                })
+            return files
+        except Exception as exc:
+            logger.warning(json.dumps({
+                "event": "collaboration.files_state_load_failed",
+                "timestamp": utc_timestamp(),
+                "room_id": room_id,
+                "error": str(exc),
+                "success": False,
+            }, ensure_ascii=False, sort_keys=True))
+            return []
+
     async def send_collaboration_state(self, session: ClientSession, room_id: str) -> None:
+        files = await self._list_room_files(room_id)
         async with self._lock:
             room = self.rooms.get(room_id)
             if not room:
@@ -780,50 +810,6 @@ class RoomConnectionManager:
         for conn in connections:
             self._enqueue(conn, out_msg, event="participant_status_update")
 
-    async def handle_screen_share_update(self, websocket: WebSocket, payload: dict) -> None:
-        session_id = self.sessions_by_socket.get(websocket)
-        session = self.sessions.get(session_id) if session_id else None
-        if not session:
-            return
-        room_id = session.room_id
-        async with self._lock:
-            room = self.rooms.get(room_id)
-            connections = list(room.sessions.values()) if room else []
-
-        out_msg = json.dumps({
-            "type": "screen_share_update",
-            "room_id": room_id,
-            "sender_session_id": session_id,
-            "is_sharing": payload.get("is_sharing", False),
-            "timestamp": utc_timestamp(),
-        })
-        for conn in connections:
-            if conn.session_id != session_id:
-                self._enqueue(conn, out_msg, event="screen_share_update")
-
-    async def handle_presentation_pointer(self, websocket: WebSocket, payload: dict) -> None:
-        session_id = self.sessions_by_socket.get(websocket)
-        session = self.sessions.get(session_id) if session_id else None
-        if not session:
-            return
-        room_id = session.room_id
-        async with self._lock:
-            room = self.rooms.get(room_id)
-            connections = list(room.sessions.values()) if room else []
-
-        out_msg = json.dumps({
-            "type": "presentation_pointer",
-            "room_id": room_id,
-            "sender_session_id": session_id,
-            "x": payload.get("x", 0),
-            "y": payload.get("y", 0),
-            "page": payload.get("page", 1),
-            "timestamp": utc_timestamp(),
-        })
-        for conn in connections:
-            if conn.session_id != session_id:
-                self._enqueue(conn, out_msg, event="presentation_pointer")
-
     async def handle_permissions_update(self, websocket: WebSocket, payload: dict) -> None:
         session_id = self.sessions_by_socket.get(websocket)
         session = self.sessions.get(session_id) if session_id else None
@@ -938,6 +924,7 @@ class RoomConnectionManager:
         return True
 
     async def send_collaboration_state(self, session: ClientSession, room_id: str) -> None:
+        files = await self._list_room_files(room_id)
         async with self._lock:
             room = self.rooms.get(room_id)
             if not room:
@@ -947,6 +934,7 @@ class RoomConnectionManager:
                 "room_id": room_id,
                 "whiteboard_shapes": getattr(room, "whiteboard_shapes", []),
                 "notes_content": getattr(room, "notes_content", ""),
+                "files": files,
                 "host_permissions": getattr(room, "host_permissions", {
                     "allow_share": True,
                     "allow_whiteboard": True,
@@ -961,6 +949,7 @@ class RoomConnectionManager:
         self._enqueue(session, json.dumps(state_payload), event="sync_collaboration_state")
 
     async def handle_whiteboard_update(self, websocket: WebSocket, payload: dict) -> None:
+        started = perf_counter()
         room_id = payload.get("room_id")
         shapes = payload.get("whiteboard_shapes")
         action = payload.get("action")
@@ -992,6 +981,7 @@ class RoomConnectionManager:
                 self._enqueue(s, json.dumps(broadcast_payload), event="whiteboard_update")
 
     async def handle_notes_update(self, websocket: WebSocket, payload: dict) -> None:
+        started = perf_counter()
         room_id = payload.get("room_id")
         content = payload.get("notes_content")
         async with self._lock:
@@ -1019,6 +1009,7 @@ class RoomConnectionManager:
                 self._enqueue(s, json.dumps(broadcast_payload), event="notes_update")
 
     async def handle_screen_share_update(self, websocket: WebSocket, payload: dict) -> None:
+        started = perf_counter()
         room_id = payload.get("room_id")
         active = payload.get("active")
         async with self._lock:
@@ -1046,6 +1037,15 @@ class RoomConnectionManager:
             "sender_name": session.username if session else "Someone",
             "timestamp": utc_timestamp(),
         }
+        if session:
+            self._log_signaling_event(
+                "screen_share_update",
+                session=session,
+                target_session_id=None,
+                active=active,
+                active_screen_sharer_session_id=room.active_screen_sharer_session_id,
+                recipient_count=len(sessions),
+            )
         for s in sessions:
             if s.connected:
                 self._enqueue(s, json.dumps(broadcast_payload), event="screen_share_update")
@@ -1073,6 +1073,7 @@ class RoomConnectionManager:
                 self._enqueue(s, json.dumps(broadcast_payload), event="presentation_pointer")
 
     async def handle_permissions_update(self, websocket: WebSocket, payload: dict) -> None:
+        started = perf_counter()
         room_id = payload.get("room_id")
         permissions = payload.get("host_permissions")
         async with self._lock:
@@ -1097,6 +1098,7 @@ class RoomConnectionManager:
                 self._enqueue(s, json.dumps(broadcast_payload), event="permissions_update")
 
     async def handle_recording_update(self, websocket: WebSocket, payload: dict) -> None:
+        started = perf_counter()
         room_id = payload.get("room_id")
         status = payload.get("status")
         reason = payload.get("reason", "Stopped by owner")
@@ -1347,6 +1349,15 @@ class RoomConnectionManager:
         try:
             try:
                 audio_bytes = base64.b64decode(message.audio_base64, validate=True)
+                self._log_voice_event(
+                    "audio_received",
+                    session=sender,
+                    sequence=message.sequence,
+                    room_id=message.room_id,
+                    mime_type=message.mime_type,
+                    input_bytes=len(audio_bytes),
+                    captured_at=message.captured_at,
+                )
             except (binascii.Error, ValueError) as exc:
                 self._log_voice_event(
                     "invalid_chunk",
@@ -1409,6 +1420,18 @@ class RoomConnectionManager:
                 return
 
             transcript = stt_result.text.strip()
+            self._log_voice_event(
+                "stt_completed",
+                session=sender,
+                sequence=message.sequence,
+                room_id=message.room_id,
+                input_bytes=len(audio_bytes),
+                output_chars=len(transcript),
+                output_preview=transcript[:160],
+                detected_language=stt_result.language,
+                latency_ms=stt_result.latency_ms,
+                success=bool(transcript),
+            )
             if not transcript:
                 self._log_voice_event(
                     "empty_transcript",
@@ -1437,6 +1460,18 @@ class RoomConnectionManager:
                 language_hint=stt_result.language or sender.preferred_language,
             )
             source_language = normalize_language(detection.language)
+            self._log_voice_event(
+                "language_detected",
+                session=sender,
+                sequence=message.sequence,
+                room_id=message.room_id,
+                input_chars=len(transcript),
+                output=source_language,
+                whisper_language=stt_result.language,
+                language_hint=sender.preferred_language,
+                mixed_language=detection.mixed_language,
+                success=True,
+            )
             
             async with self._lock:
                 room.conversation_context.append({
@@ -1524,6 +1559,24 @@ class RoomConnectionManager:
                     )
 
                 translation_latency = int((perf_counter() - translation_started) * 1000)
+                self._log_voice_event(
+                    "translation_completed",
+                    session=sender,
+                    sequence=message.sequence,
+                    source_language=source_language,
+                    target_language=target_lang,
+                    input_chars=len(transcript),
+                    output_chars=len(result.translated or ""),
+                    output_preview=(result.translated or "")[:160],
+                    latency_ms=translation_latency,
+                    status=result.status,
+                    success=result.status in {"success", "skipped_same_language"},
+                    error=result.error,
+                )
+                translated_text = (result.translated or "").strip()
+                translation_success = result.status == "success" and not result.error
+                language_matches = result.target_language == source_language
+
 
 
                 # 2. Send translation status & transcript
@@ -1540,6 +1593,22 @@ class RoomConnectionManager:
                         latency_ms=translation_latency,
                         message="Translation is unavailable for this language pair." if result.error else None,
                     )
+
+                    wants_audio = realtime_translation_service.should_send_translated_audio(receiver.listener_mode)
+                    tts_status = "pending" if wants_audio and translation_success and translated_text and not language_matches else "skipped"
+                    tts_skip_reason = None
+                    if not wants_audio:
+                        tts_status = "not_requested"
+                        tts_skip_reason = "listener_mode_does_not_request_audio"
+                    elif language_matches:
+                        tts_status = "skipped"
+                        tts_skip_reason = "same_language"
+                    elif not translation_success:
+                        tts_status = "skipped"
+                        tts_skip_reason = "translation_failed"
+                    elif not translated_text:
+                        tts_status = "skipped"
+                        tts_skip_reason = "empty_translation"
 
                     if realtime_translation_service.should_send_transcript(receiver.listener_mode):
                         payload = TranslatedTranscriptMessage.create(
@@ -1558,6 +1627,8 @@ class RoomConnectionManager:
                             translation_status=result.status,
                             translation_error=result.error,
                             confidence=getattr(stt_result, "confidence", 0.95),
+                            tts_status=tts_status,
+                            tts_skip_reason=tts_skip_reason,
                         )
                         self._enqueue(receiver, payload.model_dump_json(), event="voice_transcript")
 
@@ -1566,16 +1637,44 @@ class RoomConnectionManager:
                 audio_receivers = [
                     r for r in receivers
                     if realtime_translation_service.should_send_translated_audio(r.listener_mode)
-                    and result.target_language != source_language
-                    and result.translated.strip()
-                    and result.status == "success"
+                    and not language_matches
+                    and translated_text
+                    and translation_success
                 ]
+                skipped_audio_receivers = [
+                    r for r in receivers
+                    if realtime_translation_service.should_send_translated_audio(r.listener_mode)
+                    and r not in audio_receivers
+                ]
+                for receiver in skipped_audio_receivers:
+                    skip_reason = "same_language" if language_matches else "translation_failed" if not translation_success else "empty_translation"
+                    self._send_translation_status(
+                        receiver,
+                        sender=sender,
+                        detected_language=source_language,
+                        target_language=target_lang,
+                        sequence=message.sequence,
+                        stage="tts",
+                        status="skipped",
+                        latency_ms=0,
+                        message=f"TTS skipped: {skip_reason}.",
+                    )
+                    self._log_voice_event(
+                        "tts_skipped",
+                        session=sender,
+                        sequence=message.sequence,
+                        target_session_id=receiver.session_id,
+                        source_language=source_language,
+                        target_language=target_lang,
+                        reason=skip_reason,
+                        success=True,
+                    )
                 if audio_receivers:
                     await self._deliver_translation_audio(
                         room_id=message.room_id,
                         sender=sender,
                         receivers=audio_receivers,
-                        translated_text=result.translated,
+                        translated_text=translated_text,
                         detected_language=source_language,
                         target_language=target_lang,
                         sequence=message.sequence,
@@ -1591,9 +1690,21 @@ class RoomConnectionManager:
                 lang = normalize_language(receiver.preferred_language)
                 receivers_by_lang.setdefault(lang, []).append(receiver)
 
-            # Spawn parallel tasks
-            for lang, lang_receivers in receivers_by_lang.items():
-                asyncio.create_task(process_target_language(lang, lang_receivers))
+            target_tasks = [
+                process_target_language(lang, lang_receivers)
+                for lang, lang_receivers in receivers_by_lang.items()
+            ]
+            if target_tasks:
+                results = await asyncio.gather(*target_tasks, return_exceptions=True)
+                for result in results:
+                    if isinstance(result, Exception):
+                        self._log_voice_event(
+                            "target_language_task_failed",
+                            session=sender,
+                            sequence=message.sequence,
+                            error=str(result),
+                            success=False,
+                        )
 
             self._log_voice_event(
                 "transcript_parallel_dispatch",
@@ -1650,6 +1761,18 @@ class RoomConnectionManager:
                 status="started",
                 message="Generating translated audio.",
             )
+
+        self._log_voice_event(
+            "tts_started",
+            session=sender,
+            sequence=sequence,
+            source_language=detected_language,
+            target_language=target_language,
+            input_chars=len(translated_text),
+            recipient_count=len(active_receivers),
+            requested_voice=sender.voice_preference,
+            success=True,
+        )
 
         try:
             audio = await realtime_translation_service.synthesize_audio(
@@ -1954,7 +2077,14 @@ class RoomConnectionManager:
                 payload=message.payload,
             )
 
-        return self._enqueue(target, outgoing.model_dump_json(), event=message.type)
+        delivered = self._enqueue(target, outgoing.model_dump_json(), event=message.type)
+        self._log_signaling_event(
+            "relay_delivered" if delivered else "relay_failed",
+            session=sender,
+            target_session_id=target.session_id,
+            signaling_type=message.type,
+        )
+        return delivered
 
     async def room_stats(self, room_id: str) -> RoomStats:
         async with self._lock:
@@ -2233,6 +2363,14 @@ class RoomConnectionManager:
             )
             return False
 
+        self._log_transport_event(
+            "queued_event",
+            session=session,
+            event_name=event,
+            payload_size=payload_size,
+            queue_size=session.outbound_queue.qsize(),
+            success=True,
+        )
         return True
 
     def _enqueue_shutdown(self, session: ClientSession) -> None:
@@ -2381,7 +2519,7 @@ class RoomConnectionManager:
         session: ClientSession | None = None,
         **fields: object,
     ) -> None:
-        payload = {"event": f"transport.{event}", **fields}
+        payload = {"event": f"transport.{event}", "timestamp": utc_timestamp(), **fields}
         if session:
             payload.update(
                 {
@@ -2448,6 +2586,30 @@ class RoomConnectionManager:
             )
         )
 
+    def _log_collaboration_event(
+        self,
+        feature: str,
+        action: str,
+        session: ClientSession | None = None,
+        **fields: object,
+    ) -> None:
+        payload = {
+            "event": "collaboration.event",
+            "timestamp": utc_timestamp(),
+            "feature": feature,
+            "action": action,
+            **fields,
+        }
+        if session:
+            payload.update({
+                "room_id": session.room_id,
+                "session_id": session.session_id,
+                "user_id": session.user_id,
+                "username": session.username,
+                "role": session.role,
+            })
+        logger.info(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+
     def _log_voice_event(
         self,
         event: str,
@@ -2479,3 +2641,9 @@ class RoomConnectionManager:
             **fields,
         }
         logger.info(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+
+
+
+
+
+

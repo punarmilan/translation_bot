@@ -262,10 +262,25 @@ function VideoTile({
   const handRaised = member?.hand_raised;
 
   useEffect(() => {
-    if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
+    const video = videoRef.current;
+    if (video && stream) {
+      video.srcObject = stream;
+      console.info("webrtc.video_track_attached", {
+        label,
+        isLocal,
+        streamId: stream.id,
+        audioTracks: stream.getAudioTracks().length,
+        videoTracks: stream.getVideoTracks().length,
+      });
+      video.play?.().catch((error) => {
+        console.info("webrtc.video_play_waiting", {
+          label,
+          isLocal,
+          error: error.message,
+        });
+      });
     }
-  }, [stream]);
+  }, [stream, label, isLocal]);
 
   return (
     <article
@@ -304,6 +319,9 @@ function VideoTile({
           playsInline
           muted={muted}
           className="h-full w-full object-cover"
+          onLoadedMetadata={() => console.info("webrtc.video_rendering", { label, isLocal })}
+          onPlaying={() => console.info("webrtc.video_playing", { label, isLocal })}
+          onError={() => console.info("webrtc.video_render_error", { label, isLocal })}
         />
       ) : (
         <div className="flex h-full w-full flex-col items-center justify-center bg-brand-mid text-center">
@@ -554,3 +572,4 @@ export default function VideoGrid({
     </div>
   );
 }
+

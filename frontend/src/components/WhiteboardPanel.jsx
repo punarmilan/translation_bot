@@ -26,6 +26,7 @@ export default function WhiteboardPanel({
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const [shapes, setShapes] = useState(initialShapes);
+  const shapesRef = useRef(initialShapes);
   const [tool, setTool] = useState("pen"); // pen | highlighter | rectangle | circle | arrow | line | text | sticky | eraser
   const [color, setColor] = useState("#5b8def");
   const [lineWidth, setLineWidth] = useState(3);
@@ -35,29 +36,16 @@ export default function WhiteboardPanel({
   const [draggedSticky, setDraggedSticky] = useState(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
 
+  useEffect(() => {
+    shapesRef.current = shapes;
+  }, [shapes]);
+
   // Sync initial shapes
   useEffect(() => {
     setShapes(initialShapes);
+    shapesRef.current = initialShapes;
   }, [initialShapes]);
 
-  // WebSocket Listener for incoming shapes
-  useEffect(() => {
-    if (!socket) return;
-    const handleWsMessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === "whiteboard_update" && data.room_id === roomId) {
-          if (data.sender_session_id !== sessionId) {
-            setShapes(data.whiteboard_shapes || []);
-          }
-        }
-      } catch (err) {
-        // Silent error
-      }
-    };
-    socket.addEventListener("message", handleWsMessage);
-    return () => socket.removeEventListener("message", handleWsMessage);
-  }, [socket, roomId, sessionId]);
 
   // Draw loop
   useEffect(() => {
@@ -405,6 +393,7 @@ export default function WhiteboardPanel({
       return shape;
     });
     setShapes(updated);
+    shapesRef.current = updated;
   };
 
   const onDragEnd = () => {
@@ -656,3 +645,4 @@ export default function WhiteboardPanel({
     </div>
   );
 }
+

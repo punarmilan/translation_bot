@@ -136,6 +136,7 @@ function JoinForm({ user, onJoin, initialRoomId = "", languages = LANGUAGE_OPTIO
   const [form, setForm] = useState({
     roomId: initialRoomId,
     userLang: user.preferred_language || "en",
+    roomRole: user.role === "host" || user.role === "admin" ? "host" : "participant",
   });
   const [shareStatus, setShareStatus] = useState("");
 
@@ -154,7 +155,7 @@ function JoinForm({ user, onJoin, initialRoomId = "", languages = LANGUAGE_OPTIO
               username: user.username,
               roomId: form.roomId.trim(),
               userLang: form.userLang,
-              role: user.role,
+              role: form.roomRole,
             });
           }}
           className="flex flex-col justify-between"
@@ -209,7 +210,7 @@ function JoinForm({ user, onJoin, initialRoomId = "", languages = LANGUAGE_OPTIO
               </p>
             )}
 
-            <div className="mb-6">
+            <div className="mb-6 grid gap-4 sm:grid-cols-2">
               <label className="block">
                 <span className="mb-1.5 block text-xs font-medium text-ui-muted">
                   Your Spoken Language
@@ -226,6 +227,17 @@ function JoinForm({ user, onJoin, initialRoomId = "", languages = LANGUAGE_OPTIO
                       {language.label}
                     </option>
                   ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-ui-muted">Join as</span>
+                <select
+                  value={form.roomRole}
+                  onChange={(event) => setForm((current) => ({ ...current, roomRole: event.target.value }))}
+                  className="ui-input text-sm"
+                >
+                  <option value="participant">Participant</option>
+                  <option value="host">Host</option>
                 </select>
               </label>
             </div>
@@ -607,6 +619,7 @@ export default function ChatPage() {
   const [meetingPanel, setMeetingPanel] = useState("chat");
   const [whiteboardShapes, setWhiteboardShapes] = useState([]);
   const [notesContent, setNotesContent] = useState("");
+  const [sharedFiles, setSharedFiles] = useState([]);
   const [hostPermissions, setHostPermissions] = useState({
     allow_share: true,
     allow_whiteboard: true,
@@ -741,6 +754,8 @@ export default function ChatPage() {
   });
 
   const socketRef = useRef(null);
+  const socketInstanceRef = useRef(0);
+  const heartbeatTimerRef = useRef(null);
   const listEndRef = useRef(null);
   const localStreamRef = useRef(null);
   const peerConnectionsRef = useRef(new Map());
@@ -750,6 +765,7 @@ export default function ChatPage() {
   });
   const remoteAudioRefs = useRef(new Map());
   const pendingIceCandidatesRef = useRef(new Map());
+  const remoteTrackStreamsRef = useRef(new Map());
   const mediaRecorderRef = useRef(null);
   const transcriptionIntervalRef = useRef(null);
   const transcriptionActiveRef = useRef(false);
@@ -813,6 +829,17 @@ export default function ChatPage() {
     setDiagnostics((current) => ({ ...current, ...fields, lastEvent }));
   };
 
+  const webRtcLog = (event, fields = {}) => {
+    const payload = {
+      event: `webrtc.${event}`,
+      roomId: session?.roomId,
+      sessionId: sessionIdRef.current,
+      ...fields,
+    };
+    console.info(payload.event, payload);
+    noteDiagnostic(payload.event, fields.diagnostics || {});
+  };
+
   const updatePeerDiagnostic = (peerId, patch) => {
     const member = memberFor(peerId);
     setPeerDiagnostics((current) => ({
@@ -868,7 +895,12 @@ export default function ChatPage() {
     });
     localStreamRef.current = stream;
     setLocalMediaStream(stream);
-    noteDiagnostic(video ? "local video stream ready" : "local audio stream ready");
+    webRtcLog("local_stream_acquired", {
+      requestedVideo: video,
+      audioTracks: stream.getAudioTracks().map((track) => track.id),
+      videoTracks: stream.getVideoTracks().map((track) => track.id),
+      diagnostics: { localMedia: video ? "audio/video" : "audio" },
+    });
     stream.getAudioTracks().forEach((track) => {
       track.enabled = !isMutedRef.current;
       track.onended = () => noteDiagnostic("local audio track ended");
@@ -1186,10 +1218,12 @@ export default function ChatPage() {
   };
 
   const removePeerConnection = (peerId) => {
+    webRtcLog("peer_removed", { peerId });
     const connection = peerConnectionsRef.current.get(peerId);
     connection?.close();
     peerConnectionsRef.current.delete(peerId);
     pendingIceCandidatesRef.current.delete(peerId);
+    remoteTrackStreamsRef.current.delete(peerId);
     updateConnectedPeer(peerId, false);
     updatePeerDiagnostic(peerId, {
       connectionState: "closed",
@@ -1298,12 +1332,17 @@ export default function ChatPage() {
       }
     }
     const connection = new RTCPeerConnection({ iceServers });
+    connection.__makingOffer = false;
     peerConnectionsRef.current.set(peerId, connection);
     updatePeerDiagnostic(peerId, {
       connectionState: connection.connectionState,
       iceConnectionState: connection.iceConnectionState,
     });
-    noteDiagnostic("peer connection created");
+    webRtcLog("peer_connection_created", {
+      peerId,
+      iceServerCount: iceServers.length,
+      diagnostics: { peerConnection: "created" },
+    });
 
     localStream.getTracks().forEach((track) => {
       connection.addTrack(track, localStream);
@@ -1311,7 +1350,12 @@ export default function ChatPage() {
 
     connection.onicecandidate = (event) => {
       if (!event.candidate) return;
-      console.info("ICE candidate exchange", { target: peerId });
+      webRtcLog("ice_sent", {
+        peerId,
+        candidateType: event.candidate.type,
+        protocol: event.candidate.protocol,
+        diagnostics: { lastIceEvent: "sent" },
+      });
       setPeerDiagnostics((current) => ({
         ...current,
         [peerId]: {
@@ -1320,7 +1364,6 @@ export default function ChatPage() {
           iceCandidatesSent: (current[peerId]?.iceCandidatesSent || 0) + 1,
         },
       }));
-      noteDiagnostic("ICE candidate sent");
       sendSignal("webrtc_ice_candidate", peerId, {
         candidate: event.candidate.toJSON(),
       });
@@ -1328,56 +1371,74 @@ export default function ChatPage() {
 
     connection.oniceconnectionstatechange = () => {
       const state = connection.iceConnectionState;
-      console.info("ICE connection state", { peerId, state });
+      webRtcLog("ice_state", {
+        peerId,
+        state,
+        diagnostics: { iceConnectionState: state },
+      });
       updatePeerDiagnostic(peerId, { iceConnectionState: state });
-      noteDiagnostic(`ICE ${state}`);
       if (state === "failed") {
         void recoverPeerConnection(peerId);
       }
     };
 
     connection.onicegatheringstatechange = () => {
-      console.info("ICE gathering state", {
+      webRtcLog("ice_gathering_state", {
         peerId,
         state: connection.iceGatheringState,
       });
     };
 
     connection.ontrack = (event) => {
-      const [stream] = event.streams;
-      if (!stream) return;
+      let [stream] = event.streams;
+      if (!stream) {
+        stream = remoteTrackStreamsRef.current.get(peerId) || new MediaStream();
+        remoteTrackStreamsRef.current.set(peerId, stream);
+        if (!stream.getTracks().some((track) => track.id === event.track.id)) {
+          stream.addTrack(event.track);
+        }
+      }
+      webRtcLog("track_received", {
+        peerId,
+        trackKind: event.track.kind,
+        trackId: event.track.id,
+        streamId: stream.id,
+        diagnostics: { lastTrack: event.track.kind },
+      });
       stream.getTracks().forEach((track) => {
-        track.onended = () => noteDiagnostic(`remote ${track.kind} ended`);
-        track.onmute = () => noteDiagnostic(`remote ${track.kind} muted`);
-        track.onunmute = () => noteDiagnostic(`remote ${track.kind} unmuted`);
+        track.onended = () => webRtcLog("remote_track_ended", { peerId, trackKind: track.kind, trackId: track.id });
+        track.onmute = () => webRtcLog("remote_track_muted", { peerId, trackKind: track.kind, trackId: track.id });
+        track.onunmute = () => webRtcLog("remote_track_unmuted", { peerId, trackKind: track.kind, trackId: track.id });
       });
       setRemoteStreams((current) => ({ ...current, [peerId]: stream }));
       updatePeerDiagnostic(peerId, {
         remoteAudioTracks: stream.getAudioTracks().length,
         remoteVideoTracks: stream.getVideoTracks().length,
       });
-      noteDiagnostic("remote media stream received");
       updateConnectedPeer(peerId, true);
     };
 
     connection.onconnectionstatechange = () => {
       const state = connection.connectionState;
+      webRtcLog("peer_connection_state", {
+        peerId,
+        state,
+        diagnostics: { connectionState: state },
+      });
+      updatePeerDiagnostic(peerId, { connectionState: state });
       if (state === "connected") {
-        console.info("Peer connected", { peerId });
         connection.__isRestarting = false;
         connection.__restartCount = 0;
-        updatePeerDiagnostic(peerId, { connectionState: state });
-        noteDiagnostic("peer connected");
         updateConnectedPeer(peerId, true);
       }
       if (state === "failed") {
-        console.warn("Peer connection failed, initiating recovery", { peerId });
         void recoverPeerConnection(peerId);
       }
-      if (state === "disconnected" || state === "closed") {
-        console.info("Peer disconnected", { peerId, state });
-        updatePeerDiagnostic(peerId, { connectionState: state });
-        noteDiagnostic(`peer ${state}`);
+      if (state === "disconnected") {
+        updateConnectedPeer(peerId, false);
+        return;
+      }
+      if (state === "closed") {
         removePeerConnection(peerId);
       }
     };
@@ -1391,23 +1452,44 @@ export default function ChatPage() {
     const candidates = pendingIceCandidatesRef.current.get(peerId) || [];
     pendingIceCandidatesRef.current.delete(peerId);
     for (const candidate of candidates) {
-      await connection.addIceCandidate(candidate);
+      try {
+        await connection.addIceCandidate(candidate);
+        webRtcLog("ice_received", { peerId, candidateType: candidate.type });
+      } catch (error) {
+        webRtcLog("ice_add_failed", { peerId, error: error.message });
+      }
     }
   };
 
   const createOfferForPeer = async (peerId) => {
     const connection = await createPeerConnection(peerId);
-    const offer = await connection.createOffer();
-    await connection.setLocalDescription(offer);
-    console.info("Offer created", { target: peerId });
-    updatePeerDiagnostic(peerId, { localDescription: "offer" });
-    noteDiagnostic("offer created");
-    sendSignal("webrtc_offer", peerId, {
-      description: connection.localDescription,
-      media_type: isVideoCallRef.current ? "video" : "audio",
-    });
+    if (connection.__makingOffer || connection.signalingState !== "stable") {
+      webRtcLog("offer_skipped", {
+        peerId,
+        signalingState: connection.signalingState,
+        makingOffer: Boolean(connection.__makingOffer),
+      });
+      return;
+    }
+    try {
+      connection.__makingOffer = true;
+      const offer = await connection.createOffer();
+      await connection.setLocalDescription(offer);
+      webRtcLog("offer_sent", {
+        peerId,
+        signalingState: connection.signalingState,
+        mediaType: isVideoCallRef.current ? "video" : "audio",
+        diagnostics: { localDescription: "offer" },
+      });
+      updatePeerDiagnostic(peerId, { localDescription: "offer" });
+      sendSignal("webrtc_offer", peerId, {
+        description: connection.localDescription,
+        media_type: isVideoCallRef.current ? "video" : "audio",
+      });
+    } finally {
+      connection.__makingOffer = false;
+    }
   };
-
   const startAudioCall = async () => {
     try {
       setCallError("");
@@ -1574,13 +1656,17 @@ export default function ChatPage() {
       setScreenStream(stream);
       setIsScreenSharing(true);
       const screenVideoTrack = stream.getVideoTracks()[0];
-      peerConnectionsRef.current.forEach((connection) => {
+      const cameraStream = localStreamRef.current || await ensureLocalVideo();
+      peerConnectionsRef.current.forEach((connection, peerId) => {
         const senders = connection.getSenders();
         const videoSender = senders.find((s) => s.track && s.track.kind === "video");
         if (videoSender) {
-          videoSender.replaceTrack(screenVideoTrack).catch(err => {
-            console.warn("Failed to replace track", err);
-          });
+          videoSender.replaceTrack(screenVideoTrack)
+            .then(() => webRtcLog("screen_track_replaced", { peerId, trackId: screenVideoTrack.id }))
+            .catch((err) => webRtcLog("screen_track_replace_failed", { peerId, error: err.message }));
+        } else if (screenVideoTrack) {
+          connection.addTrack(screenVideoTrack, cameraStream);
+          webRtcLog("screen_track_added", { peerId, trackId: screenVideoTrack.id });
         }
       });
       setLocalMediaStream(stream);
@@ -1592,7 +1678,7 @@ export default function ChatPage() {
         room_id: session.roomId,
         active: true,
       });
-      noteDiagnostic("screen sharing started");
+      webRtcLog("screen_share_started", { trackId: screenVideoTrack?.id });
     } catch (err) {
       console.error("Screen sharing denied", err);
       setCallError("Screen sharing permission denied or failed.");
@@ -1606,31 +1692,27 @@ export default function ChatPage() {
       setScreenStream(null);
     }
     try {
-      const originalStream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: !isCameraOff
-      });
-      localStreamRef.current = originalStream;
-      setLocalMediaStream(originalStream);
-      const cameraVideoTrack = originalStream.getVideoTracks()[0];
-      peerConnectionsRef.current.forEach((connection) => {
+      const originalStream = localStreamRef.current || await ensureLocalVideo();
+      const cameraVideoTrack = originalStream.getVideoTracks()[0] || null;
+      peerConnectionsRef.current.forEach((connection, peerId) => {
         const senders = connection.getSenders();
         const videoSender = senders.find((s) => s.track && s.track.kind === "video");
-        if (videoSender && cameraVideoTrack) {
-          videoSender.replaceTrack(cameraVideoTrack).catch(err => {
-            console.warn("Failed to restore camera track", err);
-          });
+        if (videoSender) {
+          videoSender.replaceTrack(cameraVideoTrack)
+            .then(() => webRtcLog("camera_track_restored", { peerId, trackId: cameraVideoTrack?.id || null }))
+            .catch((err) => webRtcLog("camera_track_restore_failed", { peerId, error: err.message }));
         }
       });
+      setLocalMediaStream(originalStream);
     } catch (err) {
-      console.warn("Failed to restore camera track", err);
+      webRtcLog("camera_restore_failed", { error: err.message });
     }
     sendSocketMessage({
       type: "screen_share_update",
       room_id: session.roomId,
       active: false,
     });
-    noteDiagnostic("screen sharing stopped");
+    webRtcLog("screen_share_stopped");
   };
 
   const updateRecording = (status) => {
@@ -1719,6 +1801,8 @@ export default function ChatPage() {
   };
 
   const handleOffer = async (payload) => {
+    const peerId = payload.sender_session_id;
+    webRtcLog("offer_received", { peerId, mediaType: payload.payload?.media_type });
     if (payload.payload?.media_type === "video") {
       isVideoCallRef.current = true;
       setIsVideoCall(true);
@@ -1728,15 +1812,34 @@ export default function ChatPage() {
       inCallRef.current = true;
       setInCall(true);
     }
-    const peerId = payload.sender_session_id;
     const connection = await createPeerConnection(peerId);
+    const offerCollision = connection.__makingOffer || connection.signalingState !== "stable";
+    const polite = String(sessionIdRef.current || "") > String(peerId);
+    if (offerCollision && !polite) {
+      webRtcLog("offer_ignored_collision", {
+        peerId,
+        signalingState: connection.signalingState,
+      });
+      return;
+    }
+    if (offerCollision) {
+      webRtcLog("offer_collision_rollback", {
+        peerId,
+        signalingState: connection.signalingState,
+      });
+      await connection.setLocalDescription({ type: "rollback" });
+    }
     await connection.setRemoteDescription(payload.payload.description);
+    updatePeerDiagnostic(peerId, { remoteDescription: "offer" });
     await flushPendingIce(peerId);
     const answer = await connection.createAnswer();
     await connection.setLocalDescription(answer);
-    console.info("Answer created", { target: peerId });
+    webRtcLog("answer_sent", {
+      peerId,
+      signalingState: connection.signalingState,
+      diagnostics: { localDescription: "answer" },
+    });
     updatePeerDiagnostic(peerId, { localDescription: "answer" });
-    noteDiagnostic("answer created");
     sendSignal("webrtc_answer", peerId, {
       description: connection.localDescription,
     });
@@ -1746,11 +1849,21 @@ export default function ChatPage() {
     const peerId = payload.sender_session_id;
     const connection = peerConnectionsRef.current.get(peerId);
     if (!connection) return;
+    if (connection.signalingState !== "have-local-offer") {
+      webRtcLog("answer_ignored_unexpected_state", {
+        peerId,
+        signalingState: connection.signalingState,
+      });
+      return;
+    }
     await connection.setRemoteDescription(payload.payload.description);
     await flushPendingIce(peerId);
-    console.info("Answer received", { peerId });
+    webRtcLog("answer_received", {
+      peerId,
+      signalingState: connection.signalingState,
+      diagnostics: { remoteDescription: "answer" },
+    });
     updatePeerDiagnostic(peerId, { remoteDescription: "answer" });
-    noteDiagnostic("answer received");
   };
 
   const handleIceCandidate = async (payload) => {
@@ -1766,17 +1879,21 @@ export default function ChatPage() {
         iceCandidatesReceived: (current[peerId]?.iceCandidatesReceived || 0) + 1,
       },
     }));
-    noteDiagnostic("ICE candidate received");
     const connection = peerConnectionsRef.current.get(peerId);
     if (!connection?.remoteDescription) {
       const pending = pendingIceCandidatesRef.current.get(peerId) || [];
       pending.push(candidate);
       pendingIceCandidatesRef.current.set(peerId, pending);
+      webRtcLog("ice_queued", { peerId, queuedCount: pending.length });
       return;
     }
-    await connection.addIceCandidate(candidate);
+    try {
+      await connection.addIceCandidate(candidate);
+      webRtcLog("ice_received", { peerId, candidateType: candidate.type });
+    } catch (error) {
+      webRtcLog("ice_add_failed", { peerId, error: error.message });
+    }
   };
-
   const handleSignalingMessage = async (payload) => {
     if (payload.room_id !== session?.roomId) return;
     if (payload.target_session_id && payload.target_session_id !== sessionIdRef.current) {
@@ -1787,6 +1904,7 @@ export default function ChatPage() {
       if (payload.type === "call_started") {
         const hostId = payload.payload?.host_session_id || payload.sender_session_id;
         const mediaType = payload.payload?.media_type || "audio";
+        webRtcLog("peer_joined_call", { peerId: payload.sender_session_id, hostId, mediaType });
         isVideoCallRef.current = mediaType === "video";
         setIsVideoCall(mediaType === "video");
         setCallActive(true);
@@ -1799,6 +1917,7 @@ export default function ChatPage() {
       }
 
       if (payload.type === "call_ended") {
+        webRtcLog("call_ended_received", { peerId: payload.sender_session_id, reason: payload.payload?.reason });
         if (payload.payload?.reason === "peer_left") {
           removePeerConnection(payload.sender_session_id);
           return;
@@ -1848,6 +1967,13 @@ export default function ChatPage() {
     if (!session) return undefined;
     let active = true;
     intentionalCloseRef.current = false;
+
+    const clearHeartbeatTimer = () => {
+      if (heartbeatTimerRef.current) {
+        clearInterval(heartbeatTimerRef.current);
+        heartbeatTimerRef.current = null;
+      }
+    };
 
     const clearReconnectTimer = () => {
       if (reconnectTimerRef.current) {
@@ -1901,6 +2027,7 @@ export default function ChatPage() {
       };
 
       socket.onerror = () => {
+        if (socketInstanceRef.current !== socketInstanceId) return;
         noteDiagnostic("websocket error", { websocketStatus: "error" });
         setConnectionError("WebSocket error. Reconnecting...");
       };
@@ -1936,6 +2063,7 @@ export default function ChatPage() {
         if (payload.type === "sync_collaboration_state") {
           setWhiteboardShapes(payload.whiteboard_shapes || []);
           setNotesContent(payload.notes_content || "");
+          setSharedFiles(payload.files || []);
           setHostPermissions(payload.host_permissions || {
             allow_share: true,
             allow_whiteboard: true,
@@ -1959,6 +2087,10 @@ export default function ChatPage() {
           return;
         }
         if (payload.type === "screen_share_update") {
+          webRtcLog("screen_share_update_received", {
+            peerId: payload.sender_session_id,
+            activeScreenSharer: payload.active_screen_sharer_session_id,
+          });
           setActiveScreenSharer(payload.active_screen_sharer_session_id);
           if (payload.active_screen_sharer_session_id) {
             setMeetingLayout("presentation");
@@ -1973,6 +2105,17 @@ export default function ChatPage() {
         }
         if (payload.type === "recording_update") {
           setRecordingStatus(payload.recording_status || { status: "stopped", timestamp: null });
+          return;
+        }
+        if (payload.type === "file_uploaded") {
+          setSharedFiles((current) => {
+            const withoutDuplicate = current.filter((file) => file.file_id !== payload.file?.file_id);
+            return payload.file ? [payload.file, ...withoutDuplicate] : current;
+          });
+          return;
+        }
+        if (payload.type === "file_deleted") {
+          setSharedFiles((current) => current.filter((file) => file.file_id !== payload.file_id));
           return;
         }
         if (payload.type === "presentation_pointer") {
@@ -2043,6 +2186,8 @@ export default function ChatPage() {
                 ? {
                     ...item,
                     tts_latency_ms: payload.tts_latency_ms,
+                    tts_status: "synthesized",
+                    tts_skip_reason: null,
                     total_latency_ms: payload.total_latency_ms,
                   }
                 : item
@@ -2157,9 +2302,15 @@ export default function ChatPage() {
       const audio = remoteAudioRefs.current.get(peerId);
       if (audio && audio.srcObject !== stream) {
         audio.srcObject = stream;
+        webRtcLog("audio_track_attached", {
+          peerId,
+          streamId: stream.id,
+          audioTracks: stream.getAudioTracks().length,
+        });
       }
       if (audio) {
         audio.muted = originalAudioMuted;
+        webRtcLog("audio_rendering", { peerId, muted: originalAudioMuted });
       }
     });
   }, [remoteStreams, originalAudioMuted]);
@@ -3028,11 +3179,20 @@ export default function ChatPage() {
               ttsStatus={ttsStatus}
               onChangeListenerMode={translationEnabledByAdmin ? changeListenerMode : () => setTranscriptionError("Translation is disabled by an administrator.")}
               disabled={!translationEnabledByAdmin}
-              onPlaybackStateChange={(item, playing) => {
+              onPlaybackStateChange={(item, playing, result) => {
                 setParticipantTranslationStatus((current) => ({
                   ...current,
                   [item.sender_session_id]: playing ? "Speaking..." : "",
                 }));
+                if (playing) {
+                  setTtsStatus(`Playing translated audio from ${item.sender}.`);
+                } else if (result?.status === "ended") {
+                  setTtsStatus("Translated audio playback completed.");
+                } else if (result?.status === "autoplay_blocked") {
+                  setTtsStatus("Browser blocked translated audio autoplay. Click once in the page and try again.");
+                } else if (result?.status === "playback_failed") {
+                  setTtsStatus("Translated audio playback failed in the browser.");
+                }
               }}
             />
           </div>
@@ -3095,6 +3255,7 @@ export default function ChatPage() {
               sessionId={sessionId}
               username={session.username}
               socket={socketRef.current}
+              initialFiles={sharedFiles}
               currentUserRole={userRole}
               allowUploads={hostPermissions.allow_files || userRole === "host" || userRole === "admin" || userRole === "co-host"}
             />
@@ -3231,4 +3392,13 @@ export default function ChatPage() {
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
 

@@ -19,6 +19,17 @@ const PIPELINE = [
   { id: "playing", label: "Playing" },
 ];
 
+function ttsLabel(item) {
+  if (item.tts_status === "synthesized" || item.tts_latency_ms) return "Synthesized";
+  if (item.tts_status === "pending") return "Pending";
+  if (item.tts_status === "not_requested") return "Not requested";
+  if (item.tts_status === "skipped") {
+    const reason = item.tts_skip_reason || "not_needed";
+    return `Skipped: ${reason.replaceAll("_", " ")}`;
+  }
+  return "Not generated";
+}
+
 function activePipelineIndex(status = "", ttsStatus = "") {
   const value = `${status} ${ttsStatus}`.toLowerCase();
   if (value.includes("playing") || value.includes("delivered")) return 4;
@@ -241,7 +252,7 @@ export default function TranslationPanel({
                       <span className="bg-ui-elevated px-1.5 py-0.5 rounded">TTS: {item.tts_latency_ms}ms</span>
                     )}
                     <span className="bg-ui-success/10 text-ui-success px-1.5 py-0.5 rounded font-medium">
-                      TTS Status: {item.tts_latency_ms ? "Synthesized" : "Skipped"}
+                      TTS Status: {ttsLabel(item)}
                     </span>
                   </div>
                 </div>

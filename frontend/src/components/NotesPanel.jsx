@@ -19,25 +19,6 @@ export default function NotesPanel({
     setContent(initialContent);
   }, [initialContent]);
 
-  // WebSocket Listener for incoming notes updates
-  useEffect(() => {
-    if (!socket) return;
-    const handleWsMessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === "notes_update" && data.room_id === roomId) {
-          if (data.sender_session_id !== sessionId) {
-            setContent(data.notes_content || "");
-            setSyncStatus("Saved");
-          }
-        }
-      } catch (err) {
-        // Silent error
-      }
-    };
-    socket.addEventListener("message", handleWsMessage);
-    return () => socket.removeEventListener("message", handleWsMessage);
-  }, [socket, roomId, sessionId]);
 
   const broadcastNotes = (newContent) => {
     if (!socket || !allowEditing) return;
@@ -63,6 +44,12 @@ export default function NotesPanel({
       setSyncStatus("Saved");
     }, 400);
   };
+
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    };
+  }, []);
 
   // Micro Markdown parser
   const renderMarkdown = (text) => {
@@ -227,3 +214,4 @@ export default function NotesPanel({
     </div>
   );
 }
+

@@ -212,7 +212,7 @@ async def websocket_room_chat(
             username=authenticated_username,
             name=current_user.get("name") or authenticated_username,
             preferred_language=authenticated_language,
-            role=authenticated_role,
+            role=join_payload.role if join_payload.role in {"host", "participant"} else authenticated_role,
             pronouns=current_user.get("pronouns"),
             voice_preference=current_user.get("voice_preference", "auto"),
             translation_mode=translation_mode,
@@ -250,6 +250,14 @@ async def websocket_room_chat(
                 continue
 
             payload_type = raw_payload.get("type", "chat")
+            received_at = time.perf_counter()
+            payload_size = len(json.dumps(raw_payload, ensure_ascii=False).encode("utf-8"))
+            logger.info(json.dumps({"event":"transport.incoming_event","room_id":room_id,"user_id":user_id,"event_name":payload_type,"payload_size":payload_size,"timestamp":time.time()}, sort_keys=True))
+
+            if payload_type == "ping":
+                await manager.mark_heartbeat(websocket)
+                logger.info(json.dumps({"event":"transport.incoming_event_processed","room_id":room_id,"user_id":user_id,"event_name":payload_type,"processing_time_ms":round((time.perf_counter()-received_at)*1000,2),"success":True}, sort_keys=True))
+                continue
             if payload_type in PREFERENCE_TYPES:
                 try:
                     preferences = IncomingListenerPreferencesMessage.model_validate(raw_payload)
@@ -1226,4 +1234,5 @@ async def delete_meeting_file(room_id: str, file_id: str, session_id: str = Quer
             manager._enqueue(s, json.dumps(broadcast_payload), event="file_deleted")
             
     return {"status": "ok"}
+
 
