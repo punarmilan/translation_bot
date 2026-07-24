@@ -4,6 +4,7 @@ import binascii
 import contextlib
 import json
 import logging
+import time
 from collections import Counter
 from dataclasses import dataclass, field
 from time import perf_counter
@@ -40,6 +41,7 @@ from app.translation.service import (
     normalize_language,
     translate_text,
 )
+from app.config import get_settings
 from app.database import get_db
 from app.repositories.room_repository import RoomRepository
 from app.repositories.translation_log_repository import TranslationLogRepository
@@ -139,6 +141,10 @@ class RoomState:
     })
     translation_mode: str = "General"
     conversation_context: list[dict] = field(default_factory=list)
+    pending_host_user_id: str | None = None
+    pending_host_session_id: str | None = None
+    host_grace_deadline: float | None = None
+    host_grace_task: asyncio.Task[None] | None = None
 
 
 
@@ -224,8 +230,20 @@ class RoomConnectionManager:
             if translation_mode and translation_mode != "General":
                 room.translation_mode = translation_mode
 
-            is_new_room = len(room.sessions) == 0
-            if is_new_room:
+            is_returning_host = bool(
+                user_id and room.pending_host_user_id and room.pending_host_user_id == user_id
+            )
+            is_new_room = len(room.sessions) == 0 and not is_returning_host
+            if is_returning_host:
+                session.role = "host"
+                room.meeting_host_session_id = session.session_id
+                room.pending_host_user_id = None
+                room.pending_host_session_id = None
+                room.host_grace_deadline = None
+                if room.host_grace_task and not room.host_grace_task.done():
+                    room.host_grace_task.cancel()
+                room.host_grace_task = None
+            elif is_new_room:
                 session.role = "host"
                 room.meeting_host_session_id = session.session_id
                 asyncio.create_task(self._periodic_summary_loop(room_id))
@@ -256,6 +274,11 @@ class RoomConnectionManager:
                 "translation_enabled": room.translation_enabled,
                 "translation_mode": room.translation_mode,
             }
+            other_sessions = (
+                [s for s in room.sessions.values() if s.session_id != session.session_id]
+                if is_returning_host
+                else []
+            )
 
 
         self._log_transport_event(
@@ -304,6 +327,20 @@ class RoomConnectionManager:
             ),
             event="room_policy",
         )
+        if is_returning_host and other_sessions and meeting_state:
+            host_reconnected = OutgoingSignalingMessage.create(
+                message_type="call_started",
+                room_id=room_id,
+                sender_session_id=session.session_id,
+                sender_name=session.username,
+                payload={
+                    "host_session_id": session.session_id,
+                    "media_type": meeting_state["media_type"],
+                },
+            ).model_dump_json()
+            for other_session in other_sessions:
+                self._enqueue(other_session, host_reconnected, event="call_started")
+
         await self.send_collaboration_state(session, room_id)
         await self.broadcast_system(room_id, f"{username} joined the room")
         await self.broadcast_presence(room_id)
@@ -350,8 +387,26 @@ class RoomConnectionManager:
 
             if room:
                 room.sessions.pop(session.session_id, None)
-                host_ended_meeting = room.meeting_host_session_id == session.session_id
-                if host_ended_meeting:
+                is_host_session = room.meeting_host_session_id == session.session_id
+                grace_seconds = get_settings().HOST_DISCONNECT_GRACE_SECONDS
+                start_grace = (
+                    is_host_session
+                    and room.meeting_active
+                    and bool(session.user_id)
+                    and grace_seconds > 0
+                )
+                host_ended_meeting = False
+                if start_grace:
+                    room.pending_host_user_id = session.user_id
+                    room.pending_host_session_id = session.session_id
+                    room.host_grace_deadline = time.time() + grace_seconds
+                    if room.host_grace_task and not room.host_grace_task.done():
+                        room.host_grace_task.cancel()
+                    room.host_grace_task = asyncio.create_task(
+                        self._expire_host_grace(room_id, session.session_id)
+                    )
+                elif is_host_session:
+                    host_ended_meeting = True
                     room.meeting_active = False
                     room.meeting_host_session_id = None
                     for remaining_session in room.sessions.values():
@@ -360,7 +415,7 @@ class RoomConnectionManager:
                     if peer.active_peer_session_id == session.session_id:
                         peer.active_peer_session_id = None
                         peer_to_notify = peer
-                if not room.sessions:
+                if not room.sessions and not start_grace:
                     self.rooms.pop(room_id, None)
                     await room_repo.end_meeting(room_id)
                     from app.intelligence.service import meeting_intelligence_engine
@@ -432,6 +487,62 @@ class RoomConnectionManager:
                 room_stats=stats,
             )
             await self.broadcast_presence(room_id)
+
+    async def _expire_host_grace(self, room_id: str, expected_session_id: str) -> None:
+        """Ends a meeting if its host has not reconnected within the configured grace window."""
+        await asyncio.sleep(get_settings().HOST_DISCONNECT_GRACE_SECONDS)
+
+        room_should_close = False
+        remaining_sessions: list[ClientSession] = []
+        async with self._lock:
+            room = self.rooms.get(room_id)
+            if not room or room.pending_host_session_id != expected_session_id:
+                return  # Host already reconnected, or the grace window was superseded.
+
+            room.meeting_active = False
+            room.meeting_host_session_id = None
+            room.pending_host_user_id = None
+            room.pending_host_session_id = None
+            room.host_grace_deadline = None
+            room.host_grace_task = None
+            for remaining_session in room.sessions.values():
+                remaining_session.in_meeting = False
+            remaining_sessions = list(room.sessions.values())
+            room_should_close = not room.sessions
+            if room_should_close:
+                self.rooms.pop(room_id, None)
+
+        if room_should_close:
+            db = get_db()
+            room_repo = RoomRepository(db)
+            await room_repo.end_meeting(room_id)
+            from app.intelligence.service import meeting_intelligence_engine
+            asyncio.create_task(meeting_intelligence_engine.generate_summary(room_id))
+            from app.integrations.webhooks import webhook_manager
+            asyncio.create_task(webhook_manager.dispatch_event("meeting.ended", {"room_id": room_id}))
+
+        if remaining_sessions:
+            meeting_ended = OutgoingSignalingMessage.create(
+                message_type="call_ended",
+                room_id=room_id,
+                sender_session_id=expected_session_id,
+                sender_name="Host",
+                payload={"reason": "host_disconnected"},
+            ).model_dump_json()
+            for remaining_session in remaining_sessions:
+                self._enqueue(remaining_session, meeting_ended, event="call_ended")
+            await self.broadcast_system(
+                room_id,
+                "Host did not reconnect in time. Meeting ended.",
+            )
+            await self.broadcast_presence(room_id)
+
+    async def mark_heartbeat(self, websocket: WebSocket) -> None:
+        session_id = self.sessions_by_socket.get(websocket)
+        session = self.sessions.get(session_id) if session_id else None
+        if not session:
+            return
+        session.last_seen_at = utc_timestamp()
 
     async def _periodic_summary_loop(self, room_id: str) -> None:
         from app.intelligence.service import meeting_intelligence_engine
@@ -1953,6 +2064,12 @@ class RoomConnectionManager:
                     if ending_room_meeting:
                         room.meeting_active = False
                         room.meeting_host_session_id = None
+                        if room.host_grace_task and not room.host_grace_task.done():
+                            room.host_grace_task.cancel()
+                        room.host_grace_task = None
+                        room.pending_host_user_id = None
+                        room.pending_host_session_id = None
+                        room.host_grace_deadline = None
                         for session in room.sessions.values():
                             session.in_meeting = False
                     for session in room.sessions.values():

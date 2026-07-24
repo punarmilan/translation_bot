@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     TURN_PORT: int = 3478
     TURN_SHARED_SECRET: str = ""
     TURN_CREDENTIAL_TTL_SECONDS: int = 3600
+    HOST_DISCONNECT_GRACE_SECONDS: int = 45
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

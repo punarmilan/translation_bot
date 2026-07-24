@@ -40,6 +40,7 @@ const WS_PROTOCOL = window.location.protocol === "https:" ? "wss" : "ws";
 const WS_BASE_URL =
   import.meta.env.VITE_WS_BASE_URL || `${WS_PROTOCOL}://${API_HOST}:8000/ws`;
 const DEFAULT_ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+const HEARTBEAT_INTERVAL_MS = 20000;
 const VOICE_ACTIVITY_SAMPLE_MS = 100;
 const VOICE_SILENCE_MS = 600;
 const VOICE_MIN_UTTERANCE_MS = 500;
@@ -766,6 +767,7 @@ export default function ChatPage() {
   const remoteAudioRefs = useRef(new Map());
   const pendingIceCandidatesRef = useRef(new Map());
   const remoteTrackStreamsRef = useRef(new Map());
+  const screenAudioSendersRef = useRef(new Map());
   const mediaRecorderRef = useRef(null);
   const transcriptionIntervalRef = useRef(null);
   const transcriptionActiveRef = useRef(false);
@@ -1224,6 +1226,7 @@ export default function ChatPage() {
     peerConnectionsRef.current.delete(peerId);
     pendingIceCandidatesRef.current.delete(peerId);
     remoteTrackStreamsRef.current.delete(peerId);
+    screenAudioSendersRef.current.delete(peerId);
     updateConnectedPeer(peerId, false);
     updatePeerDiagnostic(peerId, {
       connectionState: "closed",
@@ -1245,6 +1248,7 @@ export default function ChatPage() {
     peerConnectionsRef.current.forEach((connection) => connection.close());
     peerConnectionsRef.current.clear();
     pendingIceCandidatesRef.current.clear();
+    screenAudioSendersRef.current.clear();
     stopVoiceTranscription();
     localStreamRef.current?.getTracks().forEach((track) => track.stop());
     localStreamRef.current = null;
@@ -1441,6 +1445,10 @@ export default function ChatPage() {
       if (state === "closed") {
         removePeerConnection(peerId);
       }
+    };
+
+    connection.onnegotiationneeded = () => {
+      void createOfferForPeer(peerId);
     };
 
     return connection;
@@ -1655,7 +1663,10 @@ export default function ChatPage() {
       });
       setScreenStream(stream);
       setIsScreenSharing(true);
+      isVideoCallRef.current = true;
+      setIsVideoCall(true);
       const screenVideoTrack = stream.getVideoTracks()[0];
+      const screenAudioTrack = stream.getAudioTracks()[0] || null;
       const cameraStream = localStreamRef.current || await ensureLocalVideo();
       peerConnectionsRef.current.forEach((connection, peerId) => {
         const senders = connection.getSenders();
@@ -1667,6 +1678,11 @@ export default function ChatPage() {
         } else if (screenVideoTrack) {
           connection.addTrack(screenVideoTrack, cameraStream);
           webRtcLog("screen_track_added", { peerId, trackId: screenVideoTrack.id });
+        }
+        if (screenAudioTrack) {
+          const screenAudioSender = connection.addTrack(screenAudioTrack, stream);
+          screenAudioSendersRef.current.set(peerId, screenAudioSender);
+          webRtcLog("screen_audio_track_added", { peerId, trackId: screenAudioTrack.id });
         }
       });
       setLocalMediaStream(stream);
@@ -1691,6 +1707,18 @@ export default function ChatPage() {
       screenStream.getTracks().forEach((t) => t.stop());
       setScreenStream(null);
     }
+    peerConnectionsRef.current.forEach((connection, peerId) => {
+      const screenAudioSender = screenAudioSendersRef.current.get(peerId);
+      if (screenAudioSender) {
+        try {
+          connection.removeTrack(screenAudioSender);
+          webRtcLog("screen_audio_track_removed", { peerId });
+        } catch (err) {
+          webRtcLog("screen_audio_track_remove_failed", { peerId, error: err.message });
+        }
+      }
+    });
+    screenAudioSendersRef.current.clear();
     try {
       const originalStream = localStreamRef.current || await ensureLocalVideo();
       const cameraVideoTrack = originalStream.getVideoTracks()[0] || null;
@@ -1908,10 +1936,18 @@ export default function ChatPage() {
         isVideoCallRef.current = mediaType === "video";
         setIsVideoCall(mediaType === "video");
         setCallActive(true);
+        const hostChanged = callHostIdRef.current !== hostId;
         setCallHostId(hostId);
         callHostIdRef.current = hostId;
         if (payload.sender_session_id === sessionIdRef.current) {
           return;
+        }
+        if (inCallRef.current && hostChanged && hostId !== sessionIdRef.current) {
+          // Host reconnected under a new session id (grace-period recovery) while we
+          // were still in the call. Re-offer so our media reaches the new connection.
+          createOfferForPeer(hostId).catch((error) => {
+            console.error("Failed to re-offer to reconnected host", error);
+          });
         }
         return;
       }
@@ -1984,6 +2020,7 @@ export default function ChatPage() {
 
     const connectSocket = () => {
       if (!active) return;
+      const instanceId = ++socketInstanceRef.current;
       const token = localStorage.getItem("access_token");
       const roomId = encodeURIComponent(session.roomId);
       const userLang = encodeURIComponent(activeLanguageRef.current || session.userLang);
@@ -2024,15 +2061,22 @@ export default function ChatPage() {
             hand_raised: isHandRaisedRef.current,
           })
         );
+        clearHeartbeatTimer();
+        heartbeatTimerRef.current = window.setInterval(() => {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: "ping" }));
+          }
+        }, HEARTBEAT_INTERVAL_MS);
       };
 
       socket.onerror = () => {
-        if (socketInstanceRef.current !== socketInstanceId) return;
+        if (socketInstanceRef.current !== instanceId) return;
         noteDiagnostic("websocket error", { websocketStatus: "error" });
         setConnectionError("WebSocket error. Reconnecting...");
       };
 
       socket.onclose = (event) => {
+        clearHeartbeatTimer();
         if (!active) return;
         setIsConnected(false);
         noteDiagnostic("websocket closed", { websocketStatus: "closed" });
@@ -2040,6 +2084,7 @@ export default function ChatPage() {
           pendingCallRecoveryRef.current = {
             hostId: callHostIdRef.current,
             isVideo: isVideoCallRef.current,
+            wasHost: callHostIdRef.current === sessionIdRef.current,
           };
         }
         cleanupCall(false);
@@ -2139,7 +2184,22 @@ export default function ChatPage() {
           if (pendingCallRecoveryRef.current) {
             const recovery = pendingCallRecoveryRef.current;
             pendingCallRecoveryRef.current = null;
-            if (recovery.hostId && recovery.hostId !== payload.session_id) {
+            if (recovery.wasHost) {
+              // The server preserves host ownership across a grace-period reconnect
+              // (see host_reconnected handling below). Just restore local call UI
+              // state; participants re-offer to us once they learn our new session id.
+              isVideoCallRef.current = recovery.isVideo;
+              setIsVideoCall(recovery.isVideo);
+              inCallRef.current = true;
+              setInCall(true);
+              setCallActive(true);
+              setCallHostId(payload.session_id);
+              callHostIdRef.current = payload.session_id;
+              ensureLocalMedia({ video: recovery.isVideo }).catch((error) => {
+                console.error("Could not restore local media after reconnect", error);
+                setCallError("Could not restore camera/microphone after reconnect.");
+              });
+            } else if (recovery.hostId && recovery.hostId !== payload.session_id) {
               window.setTimeout(async () => {
                 try {
                   isVideoCallRef.current = recovery.isVideo;
@@ -2159,8 +2219,16 @@ export default function ChatPage() {
           return;
         }
         if (payload.type === "room_presence") {
-          membersRef.current = payload.members || [];
-          setMembers(payload.members || []);
+          const nextMembers = payload.members || [];
+          membersRef.current = nextMembers;
+          setMembers(nextMembers);
+          const activeSessionIds = new Set(nextMembers.map((member) => member.session_id));
+          peerConnectionsRef.current.forEach((_connection, peerId) => {
+            if (!activeSessionIds.has(peerId)) {
+              webRtcLog("peer_left_room", { peerId });
+              removePeerConnection(peerId);
+            }
+          });
           return;
         }
         if (SIGNALING_TYPES.has(payload.type)) {
@@ -2255,9 +2323,11 @@ export default function ChatPage() {
           }
           return;
         }
-        setMessages((current) => [...current, { ...payload, id: createClientId() }]);
-        if (meetingPanel !== "chat" || rightPanelCollapsed) {
-          setUnreadMessagesCount((prev) => prev + 1);
+        if (payload.type === "message") {
+          setMessages((current) => [...current, { ...payload, id: createClientId() }]);
+          if (meetingPanel !== "chat" || rightPanelCollapsed) {
+            setUnreadMessagesCount((prev) => prev + 1);
+          }
         }
       };
     };
@@ -2267,6 +2337,7 @@ export default function ChatPage() {
     return () => {
       active = false;
       clearReconnectTimer();
+      clearHeartbeatTimer();
       cleanupCall(true);
       if (socketRef.current?.readyState === WebSocket.OPEN) {
         socketRef.current.close(1000, "chat_unmounted");

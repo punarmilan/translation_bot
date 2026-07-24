@@ -63,12 +63,24 @@ Current STUN configuration:
 When the WebSocket disconnects:
 
 1. The frontend marks transport as disconnected.
-2. Reconnect attempts are tracked in diagnostics.
-3. The user rejoins with the same authenticated profile.
-4. Room membership is refreshed.
+2. Reconnect attempts are tracked in diagnostics (fixed 1200ms interval, no backoff).
+3. The client reconnects using the same room/username from in-memory state and gets a **new** `session_id` from the backend — session identity is not resumable across the socket boundary.
+4. Room membership is refreshed (stale peer connections for members who disappeared are now actively closed on `room_presence` updates, rather than waiting for ICE timeout).
 5. Peer connections are recreated when the call is rejoined.
 
-The current implementation is good for local demo recovery. Production should add persisted room state and explicit call recovery tokens.
+### Host disconnect grace period
+
+If the session that disconnects is the room's current meeting host, the backend does **not** immediately end the meeting. Instead (`RoomConnectionManager.disconnect` / `_expire_host_grace` in `backend/app/websocket_manager.py`):
+
+- The room and its `meeting_active` state are kept alive for `HOST_DISCONNECT_GRACE_SECONDS` (config, default 45s — see `backend/app/config.py` and `deploy/.env.production.example`).
+- Remaining participants are **not** notified and their peer connections are left untouched.
+- If the same authenticated user (`user_id`) reconnects within the window, they are restored as host of the same meeting under their new `session_id`, and a `call_started` message is broadcast to the other participants carrying the new host session id so they re-offer to it (`ChatPage.jsx` `call_started` handler).
+- If the grace window expires without the host reconnecting, the meeting ends as before (`call_ended`, reason `host_disconnected`) for all remaining participants.
+- This grace period only applies to **authenticated** hosts (`user_id` present) with an active meeting; anonymous hosts or an explicit "end meeting" action end the meeting immediately, as before.
+
+### Known limitation — full "survive refresh" is not yet implemented
+
+The grace period above covers the **host's own** reconnection. It does **not** give ordinary participants a resumable identity: there is still no persisted room/session state (e.g. `sessionStorage`) on the frontend, so a non-host participant who refreshes their page still lands back on the join form and must manually rejoin the room and the call. Making that fully automatic requires a broader protocol change (a stable per-participant identity that outlives the WebSocket connection, plus auto-rejoin logic on load) and is intentionally deferred to a later architecture sprint rather than bundled into this stabilization pass.
 
 ## Diagnostics
 
