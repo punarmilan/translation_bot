@@ -2367,7 +2367,7 @@ class RoomConnectionManager:
             "queued_event",
             session=session,
             event_name=event,
-            payload_size=payload_size,
+            payload_size=len(payload),
             queue_size=session.outbound_queue.qsize(),
             success=True,
         )
