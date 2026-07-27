@@ -32,17 +32,35 @@ export default function DiagnosticsPanel({
   const websocketTone = statusTone(diagnostics.websocketStatus);
   const peerSummary = useMemo(() => Object.entries(peerDiagnostics), [peerDiagnostics]);
 
+  const peersWithLossData = peerSummary.filter(
+    ([, peer]) => typeof peer.packetLossPercent === "number"
+  );
+  const avgPacketLoss =
+    peersWithLossData.length > 0
+      ? peersWithLossData.reduce((sum, [, peer]) => sum + peer.packetLossPercent, 0) /
+        peersWithLossData.length
+      : null;
+
   const lastTranscript = transcripts[0];
-  const sttLatency = lastTranscript?.stt_latency_ms || 420;
-  const translationLatency = lastTranscript?.translation_latency_ms || 280;
-  const ttsLatency = lastTranscript?.tts_latency_ms || 340;
-  const totalLatency = lastTranscript?.total_latency_ms || 1040;
+  const sttLatency = lastTranscript?.stt_latency_ms ?? null;
+  const translationLatency = lastTranscript?.translation_latency_ms ?? null;
+  const ttsLatency = lastTranscript?.tts_latency_ms ?? null;
+  const totalLatency = lastTranscript?.total_latency_ms ?? null;
+
+  const formatLatency = (ms) => (ms == null ? "No data yet" : `${ms} ms`);
 
   const getLatencyTone = (ms) => {
-    if (!ms) return "neutral";
+    if (ms == null) return "neutral";
     if (ms <= 1000) return "green";
     if (ms <= 2500) return "yellow";
     return "red";
+  };
+
+  const dotClassForLatencyTone = (tone) => {
+    if (tone === "green") return "bg-emerald-400";
+    if (tone === "yellow") return "bg-amber-400";
+    if (tone === "red") return "bg-ui-danger";
+    return "bg-white/20";
   };
 
   const playSpeakerTest = () => {
@@ -145,7 +163,19 @@ export default function DiagnosticsPanel({
               </div>
               <div className="rounded-control bg-ui-secondary p-2.5 border border-white/[0.02]">
                 <span className="text-[9px] uppercase text-ui-muted block">Packet Loss</span>
-                <span className="font-bold text-emerald-300 block mt-1">0.0% (No Loss)</span>
+                <span
+                  className={`font-bold block mt-1 ${
+                    avgPacketLoss == null
+                      ? "text-ui-subtle"
+                      : avgPacketLoss < 1
+                        ? "text-emerald-300"
+                        : avgPacketLoss < 5
+                          ? "text-amber-300"
+                          : "text-ui-danger"
+                  }`}
+                >
+                  {avgPacketLoss == null ? "Not measured yet" : `${avgPacketLoss.toFixed(1)}%`}
+                </span>
               </div>
             </div>
           </div>
@@ -159,32 +189,32 @@ export default function DiagnosticsPanel({
               <div className="rounded-control bg-ui-secondary p-2.5 border border-white/[0.02] flex flex-col justify-between">
                 <span className="text-[9px] uppercase text-ui-muted">Speech Recognition</span>
                 <div className="flex items-center gap-1.5 mt-1">
-                  <span className={`h-1.5 w-1.5 rounded-full ${getLatencyTone(sttLatency) === "green" ? "bg-emerald-400" : "bg-amber-400"}`} />
-                  <span className="font-semibold">{sttLatency} ms</span>
+                  <span className={`h-1.5 w-1.5 rounded-full ${dotClassForLatencyTone(getLatencyTone(sttLatency))}`} />
+                  <span className="font-semibold">{formatLatency(sttLatency)}</span>
                 </div>
               </div>
 
               <div className="rounded-control bg-ui-secondary p-2.5 border border-white/[0.02] flex flex-col justify-between">
                 <span className="text-[9px] uppercase text-ui-muted">Translation Speed</span>
                 <div className="flex items-center gap-1.5 mt-1">
-                  <span className={`h-1.5 w-1.5 rounded-full ${getLatencyTone(translationLatency) === "green" ? "bg-emerald-400" : "bg-amber-400"}`} />
-                  <span className="font-semibold">{translationLatency} ms</span>
+                  <span className={`h-1.5 w-1.5 rounded-full ${dotClassForLatencyTone(getLatencyTone(translationLatency))}`} />
+                  <span className="font-semibold">{formatLatency(translationLatency)}</span>
                 </div>
               </div>
 
               <div className="rounded-control bg-ui-secondary p-2.5 border border-white/[0.02] flex flex-col justify-between">
                 <span className="text-[9px] uppercase text-ui-muted">Voice Delivery</span>
                 <div className="flex items-center gap-1.5 mt-1">
-                  <span className={`h-1.5 w-1.5 rounded-full ${getLatencyTone(ttsLatency) === "green" ? "bg-emerald-400" : "bg-amber-400"}`} />
-                  <span className="font-semibold">{ttsLatency} ms</span>
+                  <span className={`h-1.5 w-1.5 rounded-full ${dotClassForLatencyTone(getLatencyTone(ttsLatency))}`} />
+                  <span className="font-semibold">{formatLatency(ttsLatency)}</span>
                 </div>
               </div>
 
               <div className="rounded-control bg-ui-secondary p-2.5 border border-white/[0.02] flex flex-col justify-between">
                 <span className="text-[9px] uppercase text-ui-muted">End-to-End Latency</span>
                 <div className="flex items-center gap-1.5 mt-1">
-                  <span className={`h-1.5 w-1.5 rounded-full ${getLatencyTone(totalLatency) === "green" ? "bg-emerald-400" : "bg-amber-400"}`} />
-                  <span className="font-semibold">{totalLatency} ms</span>
+                  <span className={`h-1.5 w-1.5 rounded-full ${dotClassForLatencyTone(getLatencyTone(totalLatency))}`} />
+                  <span className="font-semibold">{formatLatency(totalLatency)}</span>
                 </div>
               </div>
             </div>

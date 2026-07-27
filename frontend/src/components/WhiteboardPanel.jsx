@@ -302,6 +302,13 @@ export default function WhiteboardPanel({
 
   const handleMouseMove = (e) => {
     if (!isDrawing || !currentLine) return;
+    if (!allowEditing) {
+      // Permission was revoked mid-stroke; abort instead of letting the
+      // local-only line keep extending with no chance of being broadcast.
+      setIsDrawing(false);
+      setCurrentLine(null);
+      return;
+    }
     const pos = getPos(e);
 
     if (tool === "pen" || tool === "highlighter") {
@@ -326,7 +333,7 @@ export default function WhiteboardPanel({
   const handleMouseUp = () => {
     if (!isDrawing) return;
     setIsDrawing(false);
-    if (currentLine) {
+    if (currentLine && allowEditing) {
       const updated = [...shapes, currentLine];
       setShapes(updated);
       onShapesChange?.(updated);
@@ -338,7 +345,7 @@ export default function WhiteboardPanel({
 
   // Undo / Redo
   const handleUndo = () => {
-    if (shapes.length === 0) return;
+    if (!allowEditing || shapes.length === 0) return;
     const last = shapes[shapes.length - 1];
     setHistory((prev) => [...prev, last]);
     const updated = shapes.slice(0, -1);
@@ -348,7 +355,7 @@ export default function WhiteboardPanel({
   };
 
   const handleRedo = () => {
-    if (history.length === 0) return;
+    if (!allowEditing || history.length === 0) return;
     const next = history[history.length - 1];
     setHistory((prev) => prev.slice(0, -1));
     const updated = [...shapes, next];
@@ -358,6 +365,7 @@ export default function WhiteboardPanel({
   };
 
   const handleClear = () => {
+    if (!allowEditing) return;
     if (window.confirm("Are you sure you want to clear the whiteboard?")) {
       setShapes([]);
       onShapesChange?.([]);
@@ -544,21 +552,24 @@ export default function WhiteboardPanel({
           <div className="flex items-center gap-1 border-l border-white/[0.06] pl-3">
             <button
               onClick={handleUndo}
-              className="p-2 rounded hover:bg-white/[0.06] text-ui-muted"
+              disabled={!allowEditing}
+              className="p-2 rounded hover:bg-white/[0.06] text-ui-muted disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
               title="Undo"
             >
               <Undo2 size={16} />
             </button>
             <button
               onClick={handleRedo}
-              className="p-2 rounded hover:bg-white/[0.06] text-ui-muted"
+              disabled={!allowEditing}
+              className="p-2 rounded hover:bg-white/[0.06] text-ui-muted disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
               title="Redo"
             >
               <Redo2 size={16} />
             </button>
             <button
               onClick={handleClear}
-              className="p-2 rounded hover:bg-white/[0.06] text-ui-danger/70 hover:text-ui-danger"
+              disabled={!allowEditing}
+              className="p-2 rounded hover:bg-white/[0.06] text-ui-danger/70 hover:text-ui-danger disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-ui-danger/70"
               title="Clear Whiteboard"
             >
               <Trash2 size={16} />

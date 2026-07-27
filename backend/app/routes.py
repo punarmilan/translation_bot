@@ -5,6 +5,7 @@ import hmac
 import json
 import logging
 import time
+from datetime import datetime
 from typing import (
     Annotated,
     Optional,
@@ -14,7 +15,7 @@ from typing import (
 
 from pydantic import ValidationError
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, UploadFile, File, Form, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, UploadFile, File, Response
 from pydantic import BaseModel, Field
 
 from app.auth.dependencies import get_current_user
@@ -459,18 +460,9 @@ async def websocket_room_chat(
                 continue
 
             if payload_type == "room_control":
-                sender_sid = manager.sessions_by_socket.get(websocket)
-                sender_session = manager.sessions.get(sender_sid) if sender_sid else None
-                if sender_session and sender_session.role in {"host", "admin"}:
-                    cmd_type = raw_payload.get("command_type")
-                    target_uid = raw_payload.get("target_user_id")
-                    admin_cmd = {
-                        "command_type": cmd_type,
-                        "room_id": room_id,
-                        "target_user_id": target_uid,
-                        "payload": raw_payload.get("payload") or {}
-                    }
-                    await manager.apply_admin_command(admin_cmd)
+                if raw_payload.get("room_id") != room_id:
+                    continue
+                await manager.handle_room_control(websocket, raw_payload)
                 continue
 
             try:
@@ -656,47 +648,33 @@ async def public_page_builder() -> dict:
 
 
 @router.post("/api/internal/reload-config")
-async def internal_reload_config(payload: dict) -> dict:
-    event_type = payload.get("event_type", "system_config_updated")
+async def internal_reload_config(payload: dict | None = None) -> dict:
+    payload = payload or {}
     from app.runtime_settings import runtime_settings
     db = get_db()
-    
-    brand_doc = await db["platform_settings"].find_one({"key": "branding"})
-    if brand_doc and "values" in brand_doc:
-        runtime_settings.branding_settings = brand_doc["values"]
-        
-    sec_rows = await db["landing_sections"].find({}).sort("order", 1).to_list(length=100)
-    if sec_rows:
-        runtime_settings.landing_sections = [
-            {
-                "id": r.get("key") or r.get("id") or str(r.get("_id")),
-                "type": r.get("type", "custom"),
-                "name": r.get("name", "Section"),
-                "hidden": r.get("hidden", False),
-                "eyebrow": r.get("eyebrow", ""),
-                "title": r.get("title", ""),
-                "body": r.get("body", ""),
-                "cta_text": r.get("cta_text", ""),
-                "cta_link": r.get("cta_link", ""),
-                "secondary_cta_text": r.get("secondary_cta_text", ""),
-                "secondary_cta_link": r.get("secondary_cta_link", ""),
-                "image_url": r.get("image_url", ""),
-                "cards": r.get("cards", []),
-            }
-            for r in sec_rows
-        ]
-        
+
+    # Refresh the in-process runtime_settings cache from MongoDB so
+    # feature_flags/general_settings/enabled_languages reflect the latest
+    # admin changes, not just branding/landing_sections.
+    await runtime_settings.load_from_db(db)
+
+    event_type = payload.get("event_type") or "system_config_updated"
+
     out_payload = {
         "event_type": event_type,
         "branding": runtime_settings.branding_settings,
+        "general": runtime_settings.general_settings,
         "landing_sections": runtime_settings.landing_sections,
         "features": runtime_settings.feature_flags,
+        "languages": list(runtime_settings.enabled_languages),
     }
     if "branding" in payload:
         out_payload["branding"] = payload["branding"]
+    if "general" in payload:
+        out_payload["general"] = payload["general"]
     if "sections" in payload:
         out_payload["landing_sections"] = payload["sections"]
-        
+
     await manager.broadcast_config_update(event_type, out_payload)
     return {"status": "reloaded", "event_type": event_type}
 
@@ -712,34 +690,24 @@ async def synthesize_speech_endpoint(payload: dict) -> dict:
         raise HTTPException(status_code=400, detail="Text parameter is required")
 
     try:
-        from app.tts.service import get_tts_service
-        service = get_tts_service()
-        audio_bytes, content_type = await service.synthesize_speech(
+        from app.tts.service import tts_service
+        result = await tts_service.synthesize(
             text=text,
             language=language,
             voice_preference=voice_preference,
             speech_profile=speech_profile,
         )
         import base64
-        b64 = base64.b64encode(audio_bytes).decode("utf-8")
+        b64 = base64.b64encode(result.audio_bytes).decode("utf-8")
         return {
             "status": "success",
             "audio_base64": b64,
-            "content_type": content_type,
-            "data_url": f"data:{content_type};base64,{b64}",
+            "content_type": result.mime_type,
+            "data_url": f"data:{result.mime_type};base64,{b64}",
         }
     except Exception as exc:
-        logger.warning(f"TTS Synthesis audio fallback: {exc}")
-        from app.tts.service import generate_chime_wav
-        audio_bytes = generate_chime_wav(text)
-        import base64
-        b64 = base64.b64encode(audio_bytes).decode("utf-8")
-        return {
-            "status": "success",
-            "audio_base64": b64,
-            "content_type": "audio/wav",
-            "data_url": f"data:audio/wav;base64,{b64}",
-        }
+        logger.warning(f"TTS synthesis failed: {exc}")
+        raise HTTPException(status_code=503, detail=f"Text-to-speech unavailable: {exc}")
 
 
 @router.get("/stt/status")
@@ -838,36 +806,6 @@ async def public_settings() -> dict:
     return {"values": {key: value for key, value in values.items() if key in public_keys}}
 
 
-@router.post("/api/internal/reload-config")
-async def internal_reload_config(payload: dict | None = None) -> dict:
-    db = get_db()
-    from app.runtime_settings import runtime_settings
-    await runtime_settings.load_from_db(db)
-    
-    event_type = (payload and payload.get("event_type")) or "system_config_updated"
-    
-    broadcast_payload = {
-        "type": event_type,
-        "features": runtime_settings.feature_flags,
-        "general": runtime_settings.general_settings,
-        "branding": runtime_settings.branding_settings,
-        "landing_sections": runtime_settings.landing_sections,
-        "languages": list(runtime_settings.enabled_languages),
-        "data": payload.get("data") if payload else {}
-    }
-    
-    async with manager._lock:
-        all_sessions = []
-        for room in manager.rooms.values():
-            all_sessions.extend(list(room.sessions.values()))
-            
-    for s in all_sessions:
-        if s.connected:
-            manager._enqueue(s, json.dumps(broadcast_payload), event=event_type)
-            
-    return {"status": "ok", "message": f"Config reloaded and broadcasted event: {event_type}."}
-
-
 @router.get("/api/public/translation-modes")
 async def public_translation_modes() -> dict:
     db = get_db()
@@ -883,7 +821,6 @@ async def public_translation_modes() -> dict:
             {"name": "Interview", "description": "Configured for job interviews, candidate assessments, and professional screenings.", "enabled": True},
             {"name": "Conference", "description": "Designed for large-scale multi-speaker events and presentations.", "enabled": True},
         ]
-        from datetime import datetime
         for item in defaults:
             item["preferred_terminology"] = {}
             item["translation_prompt"] = f"Translate in a {item['name'].lower()} context."
@@ -1062,18 +999,47 @@ async def get_meeting_replay_timeline(room_id: str) -> dict:
     }
 
 
+def _resolve_upload_path(room_id: str, file_id: str, filename: str) -> str:
+    """Builds a file path guaranteed to stay inside the uploads directory."""
+    import os
+
+    safe_room_id = os.path.basename(room_id)
+    safe_filename = os.path.basename(filename)
+    base_dir = os.path.abspath("uploads")
+    file_path = os.path.abspath(os.path.join(base_dir, safe_room_id, f"{file_id}_{safe_filename}"))
+    if not (file_path == base_dir or file_path.startswith(base_dir + os.sep)):
+        raise HTTPException(status_code=400, detail="Invalid file path.")
+    return file_path
+
+
 @router.post("/api/meetings/{room_id}/files/upload")
 async def upload_meeting_file(
     room_id: str,
     file: UploadFile = File(...),
-    username: str = Form(...),
+    current_user: dict = Depends(get_current_user),
 ):
     import os
     import uuid
     import time
-    
+
+    username = current_user.get("username") or current_user.get("name") or "Unknown"
+
+    async with manager._lock:
+        room = manager.rooms.get(room_id)
+        if room:
+            user_id = str(current_user["_id"])
+            session = next((s for s in room.sessions.values() if s.user_id == user_id), None)
+            is_privileged = bool(session and session.role in {"host", "admin", "co-host"})
+            if not is_privileged and not room.host_permissions.get("allow_files", True):
+                raise HTTPException(
+                    status_code=403,
+                    detail="File sharing is disabled by the meeting host.",
+                )
+
     # 1. Enforce extension checks
-    filename = file.filename or ""
+    filename = os.path.basename(file.filename or "")
+    if not filename:
+        raise HTTPException(status_code=400, detail="A filename is required.")
     ext = os.path.splitext(filename)[1].lower()
     allowed_extensions = {
         ".pdf", ".docx", ".doc", ".ppt", ".pptx",
@@ -1086,17 +1052,16 @@ async def upload_meeting_file(
             status_code=400,
             detail="Unsupported file format. Allowed formats: PDF, Word, PowerPoint, Images, Audio, and Video."
         )
-        
+
     db = get_db()
     file_id = str(uuid.uuid4())
-    room_dir = os.path.join("uploads", room_id)
-    os.makedirs(room_dir, exist_ok=True)
-    file_path = os.path.join(room_dir, f"{file_id}_{filename}")
-    
+    file_path = _resolve_upload_path(room_id, file_id, filename)
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
     # 2. Enforce 25MB file size limit during chunked stream copy
     MAX_SIZE = 25 * 1024 * 1024 # 25MB
     size = 0
-    
+
     try:
         with open(file_path, "wb") as f:
             while True:
@@ -1119,7 +1084,7 @@ async def upload_meeting_file(
         if os.path.exists(file_path):
             os.remove(file_path)
         raise HTTPException(status_code=500, detail=f"File write failed: {str(e)}")
-        
+
     file_meta = {
         "file_id": file_id,
         "room_id": room_id,
@@ -1130,14 +1095,14 @@ async def upload_meeting_file(
         "timestamp": time.time(),
     }
     await db["files"].insert_one(file_meta)
-    
+
     async with manager._lock:
         room = manager.rooms.get(room_id)
         if room:
             sessions = list(room.sessions.values())
         else:
             sessions = []
-            
+
     broadcast_payload = {
         "type": "file_uploaded",
         "room_id": room_id,
@@ -1153,12 +1118,27 @@ async def upload_meeting_file(
     for s in sessions:
         if s.connected:
             manager._enqueue(s, json.dumps(broadcast_payload), event="file_uploaded")
-            
+
     return {"status": "ok", "file_id": file_id}
 
 
+async def _ensure_room_member(room_id: str, current_user: dict) -> None:
+    """Confirms the authenticated user has participated in this room before granting access to its files."""
+    if current_user.get("role") == "admin":
+        return
+    db = get_db()
+    room = await db["rooms"].find_one({"room_id": room_id})
+    if not room:
+        raise HTTPException(status_code=404, detail="Meeting room not found")
+    user_id = str(current_user["_id"])
+    is_member = any(p.get("user_id") == user_id for p in room.get("participants", []))
+    if not is_member:
+        raise HTTPException(status_code=403, detail="You are not a participant in this meeting.")
+
+
 @router.get("/api/meetings/{room_id}/files")
-async def list_meeting_files(room_id: str):
+async def list_meeting_files(room_id: str, current_user: dict = Depends(get_current_user)):
+    await _ensure_room_member(room_id, current_user)
     db = get_db()
     cursor = db["files"].find({"room_id": room_id})
     files = []
@@ -1175,46 +1155,55 @@ async def list_meeting_files(room_id: str):
 
 
 @router.get("/api/meetings/{room_id}/files/{file_id}/download")
-async def download_meeting_file(room_id: str, file_id: str):
+async def download_meeting_file(room_id: str, file_id: str, token: str | None = Query(default=None)):
     import os
     from fastapi.responses import FileResponse
-    
+
+    # Plain <a href>/<img src>/<video src> elements cannot carry an Authorization
+    # header, so this route accepts the JWT as a query param (same precedent as
+    # the WebSocket route's ?token= handling) instead of requiring Depends(get_current_user).
+    current_user = await _get_user_from_token(token)
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    await _ensure_room_member(room_id, current_user)
+
     db = get_db()
     meta = await db["files"].find_one({"room_id": room_id, "file_id": file_id})
     if not meta:
         raise HTTPException(status_code=404, detail="File not found")
-    file_path = os.path.join("uploads", room_id, f"{file_id}_{meta['filename']}")
+    file_path = _resolve_upload_path(room_id, file_id, meta["filename"])
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found on disk")
-        
+
     return FileResponse(file_path, media_type=meta.get("content_type"), filename=meta["filename"])
 
 
 @router.delete("/api/meetings/{room_id}/files/{file_id}")
-async def delete_meeting_file(room_id: str, file_id: str, session_id: str = Query(...)):
+async def delete_meeting_file(room_id: str, file_id: str, current_user: dict = Depends(get_current_user)):
     import os
-    
+
+    user_id = str(current_user["_id"])
     async with manager._lock:
         room = manager.rooms.get(room_id)
         if not room:
             raise HTTPException(status_code=404, detail="Room not active")
-        session = room.sessions.get(session_id)
-        is_authorized = session and session.role in {"host", "admin", "co-host"}
+        session = next((s for s in room.sessions.values() if s.user_id == user_id), None)
+        is_authorized = bool(session and session.role in {"host", "admin", "co-host"})
         if not is_authorized:
             raise HTTPException(status_code=403, detail="Only host or co-host can delete files")
-            
+
     db = get_db()
     meta = await db["files"].find_one({"room_id": room_id, "file_id": file_id})
     if not meta:
         raise HTTPException(status_code=404, detail="File not found")
-        
-    file_path = os.path.join("uploads", room_id, f"{file_id}_{meta['filename']}")
+
+    file_path = _resolve_upload_path(room_id, file_id, meta["filename"])
     if os.path.exists(file_path):
         try:
             os.remove(file_path)
         except Exception:
             pass
-            
+
     await db["files"].delete_one({"room_id": room_id, "file_id": file_id})
     
     async with manager._lock:

@@ -6,6 +6,7 @@ import re
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from time import perf_counter
 from typing import Any, Protocol
 
 import httpx
@@ -189,25 +190,46 @@ class LibreTranslateProvider:
             "format": "text",
         }
 
-        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-            response = await client.post(f"{base_url}/translate", json=payload)
-            if response.status_code == 400 and source_lang != "auto":
-                payload["source"] = "auto"
-                logger.info(
-                    json.dumps(
-                        {
-                            "event": "translation.provider_retry",
-                            "provider": self.name,
-                            "original_source_language": source_lang,
-                            "retry_source_language": "auto",
-                            "target_language": target_lang,
-                        },
-                        sort_keys=True,
-                    )
-                )
+        started = perf_counter()
+        timed_out = False
+        try:
+            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
                 response = await client.post(f"{base_url}/translate", json=payload)
-            response.raise_for_status()
-            response_payload = response.json()
+                if response.status_code == 400 and source_lang != "auto":
+                    payload["source"] = "auto"
+                    logger.info(
+                        json.dumps(
+                            {
+                                "event": "translation.provider_retry",
+                                "provider": self.name,
+                                "original_source_language": source_lang,
+                                "retry_source_language": "auto",
+                                "target_language": target_lang,
+                            },
+                            sort_keys=True,
+                        )
+                    )
+                    response = await client.post(f"{base_url}/translate", json=payload)
+                response.raise_for_status()
+                response_payload = response.json()
+        except httpx.TimeoutException:
+            timed_out = True
+            raise
+        finally:
+            logger.info(
+                json.dumps(
+                    {
+                        "event": "translation.provider_response",
+                        "provider": self.name,
+                        "source_language": source_lang,
+                        "target_language": target_lang,
+                        "provider_response_ms": int((perf_counter() - started) * 1000),
+                        "timeout_configured_seconds": timeout_seconds,
+                        "timed_out": timed_out,
+                    },
+                    sort_keys=True,
+                )
+            )
 
         translated_text = extract_translated_text(response_payload)
         if not translated_text:
@@ -324,6 +346,7 @@ class TranslationService:
             speaker_session_id=context.speaker_session_id if context else None,
         )
 
+        request_started = perf_counter()
         try:
             raw_translation = await self.provider.translate(formatted_text, api_source, target)
             translated_text = raw_translation
@@ -338,13 +361,28 @@ class TranslationService:
                     if lines:
                         translated_text = lines[-1]
         except (httpx.HTTPError, ValueError, TranslationProviderError) as exc:
+            timed_out = isinstance(exc, httpx.TimeoutException)
+            request_duration_ms = int((perf_counter() - request_started) * 1000)
+            logger.info(
+                json.dumps(
+                    {
+                        "event": "translation.timeout" if timed_out else "translation.provider_error",
+                        "provider": self.provider.name,
+                        "source_language": source,
+                        "target_language": target,
+                        "translation_request_ms": request_duration_ms,
+                        "error": str(exc),
+                    },
+                    sort_keys=True,
+                )
+            )
             fallback = fallback_translation(text, source, target) or text
             result = TranslationResult(
                 original=text,
                 translated=fallback,
                 source_language=source,
                 target_language=target,
-                status="fallback_unavailable",
+                status="timeout" if timed_out else "fallback_unavailable",
                 error=str(exc),
                 mixed_language=mixed_language,
             )
@@ -376,7 +414,11 @@ class TranslationService:
             status="success",
             mixed_language=mixed_language,
         )
-        log_translation_event("translation.success", result=result)
+        log_translation_event(
+            "translation.success",
+            result=result,
+            translation_request_ms=int((perf_counter() - request_started) * 1000),
+        )
         return result
 
 

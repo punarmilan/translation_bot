@@ -134,31 +134,6 @@ class TTSUnavailableError(RuntimeError):
     pass
 
 
-import wave
-import struct
-import math
-import io
-
-def generate_chime_wav(text: str) -> bytes:
-    sample_rate = 22050
-    duration_sec = max(0.6, min(3.0, len(text) * 0.08))
-    num_samples = int(sample_rate * duration_sec)
-    buf = bytearray()
-    for i in range(num_samples):
-        t = i / sample_rate
-        decay = math.exp(-3.0 * t / duration_sec)
-        val = (math.sin(2 * math.pi * 440 * t) * 0.5 + math.sin(2 * math.pi * 660 * t) * 0.3) * decay
-        sample = int(val * 32767 * 0.4)
-        buf.extend(struct.pack("<h", max(-32768, min(32767, sample))))
-    wav_io = io.BytesIO()
-    with wave.open(wav_io, "wb") as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(sample_rate)
-        wav_file.writeframes(buf)
-    return wav_io.getvalue()
-
-
 class PersistentPiperProcess:
     def __init__(self, model_path: str, config_path: str | None) -> None:
         self.model_path = model_path
@@ -207,8 +182,9 @@ class PersistentPiperProcess:
                 self.start()
 
             if not self.process:
-                audio_bytes = generate_chime_wav(text)
-                return audio_bytes, "fallback.wav"
+                raise TTSUnavailableError(
+                    f"Piper executable '{PIPER_EXECUTABLE}' is not running or failed to start"
+                )
 
             with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_file:
                 temp_path = Path(temp_file.name)
@@ -228,20 +204,29 @@ class PersistentPiperProcess:
                     payload["noise_w"] = float(noise_w)
 
                 raw_line = (json.dumps(payload) + "\n").encode("utf-8")
-                await asyncio.to_thread(self._write_stdin, raw_line)
-                stdout_line = await asyncio.to_thread(self._read_stdout)
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(self._write_stdin, raw_line),
+                        timeout=PIPER_TIMEOUT_SECONDS,
+                    )
+                    stdout_line = await asyncio.wait_for(
+                        asyncio.to_thread(self._read_stdout),
+                        timeout=PIPER_TIMEOUT_SECONDS,
+                    )
+                except asyncio.TimeoutError as err:
+                    raise TTSUnavailableError(
+                        f"Piper synthesis timed out after {PIPER_TIMEOUT_SECONDS}s"
+                    ) from err
 
                 if not stdout_line or not temp_path.exists() or temp_path.stat().st_size == 0:
-                    logger.warning("Piper output unreadable or empty. Falling back to synthetic audio.")
-                    audio_bytes = generate_chime_wav(text)
-                    return audio_bytes, "fallback.wav"
+                    raise TTSUnavailableError("Piper produced no audio output")
 
                 audio_bytes = await asyncio.to_thread(temp_path.read_bytes)
                 return audio_bytes, str(temp_path)
+            except TTSUnavailableError:
+                raise
             except Exception as err:
-                logger.warning(f"Piper synthesis error: {err}. Using audio fallback.")
-                audio_bytes = generate_chime_wav(text)
-                return audio_bytes, "fallback.wav"
+                raise TTSUnavailableError(f"Piper synthesis failed: {err}") from err
             finally:
                 if temp_path.exists():
                     await asyncio.to_thread(temp_path.unlink, True)

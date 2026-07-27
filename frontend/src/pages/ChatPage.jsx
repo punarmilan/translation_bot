@@ -786,6 +786,7 @@ export default function ChatPage() {
   const isMutedRef = useRef(false);
   const isCameraOffRef = useRef(false);
   const isVideoCallRef = useRef(false);
+  const wasVideoCallBeforeScreenShareRef = useRef(false);
   const isHandRaisedRef = useRef(false);
   const noiseFloorRef = useRef(0.005);
 
@@ -853,6 +854,34 @@ export default function ChatPage() {
       },
     }));
   };
+
+  // Poll real WebRTC packet-loss stats for the diagnostics panel while in a call,
+  // instead of showing a hardcoded "0.0% (No Loss)" placeholder.
+  useEffect(() => {
+    if (!inCall) return undefined;
+    const interval = window.setInterval(async () => {
+      for (const [peerId, connection] of peerConnectionsRef.current.entries()) {
+        if (!connection || connection.connectionState !== "connected") continue;
+        try {
+          const stats = await connection.getStats();
+          let packetsLost = 0;
+          let packetsReceived = 0;
+          stats.forEach((report) => {
+            if (report.type === "inbound-rtp" && !report.isRemote) {
+              packetsLost += report.packetsLost || 0;
+              packetsReceived += report.packetsReceived || 0;
+            }
+          });
+          const totalPackets = packetsLost + packetsReceived;
+          const packetLossPercent = totalPackets > 0 ? (packetsLost / totalPackets) * 100 : 0;
+          updatePeerDiagnostic(peerId, { packetsLost, packetsReceived, packetLossPercent });
+        } catch (error) {
+          // getStats() can transiently fail during renegotiation/teardown; skip this cycle.
+        }
+      }
+    }, 4000);
+    return () => window.clearInterval(interval);
+  }, [inCall]);
 
   const blobToBase64 = (blob) => {
     return new Promise((resolve, reject) => {
@@ -1663,6 +1692,7 @@ export default function ChatPage() {
       });
       setScreenStream(stream);
       setIsScreenSharing(true);
+      wasVideoCallBeforeScreenShareRef.current = isVideoCallRef.current;
       isVideoCallRef.current = true;
       setIsVideoCall(true);
       const screenVideoTrack = stream.getVideoTracks()[0];
@@ -1735,6 +1765,8 @@ export default function ChatPage() {
     } catch (err) {
       webRtcLog("camera_restore_failed", { error: err.message });
     }
+    isVideoCallRef.current = wasVideoCallBeforeScreenShareRef.current;
+    setIsVideoCall(wasVideoCallBeforeScreenShareRef.current);
     sendSocketMessage({
       type: "screen_share_update",
       room_id: session.roomId,
@@ -2089,6 +2121,13 @@ export default function ChatPage() {
         }
         cleanupCall(false);
         const message = `WebSocket closed: ${event.code}${event.reason ? ` - ${event.reason}` : ""}`;
+        if (!intentionalCloseRef.current && event.code === 1008) {
+          // Authentication/room-validation failure: retrying with the same
+          // token/params would just fail again in a tight loop. Stop and
+          // surface it instead of spinning.
+          setConnectionError(`${message}. Please sign in again to reconnect.`);
+          return;
+        }
         setConnectionError(
           intentionalCloseRef.current ? message : `${message}. Reconnecting...`
         );
@@ -2231,6 +2270,20 @@ export default function ChatPage() {
           });
           return;
         }
+        if (payload.type === "participant_status_update") {
+          const applyPatch = (member) =>
+            member.session_id === payload.session_id
+              ? {
+                  ...member,
+                  is_muted: payload.is_muted,
+                  is_camera_off: payload.is_camera_off,
+                  hand_raised: payload.hand_raised,
+                }
+              : member;
+          membersRef.current = membersRef.current.map(applyPatch);
+          setMembers((current) => current.map(applyPatch));
+          return;
+        }
         if (SIGNALING_TYPES.has(payload.type)) {
           await handleSignalingMessage(payload);
           return;
@@ -2261,6 +2314,13 @@ export default function ChatPage() {
                 : item
             )
           );
+          return;
+        }
+
+        if (payload.type === "command_ack") {
+          if (payload.status !== "SUCCESS") {
+            setCallError(payload.message || "Admin action failed.");
+          }
           return;
         }
 
@@ -2546,7 +2606,7 @@ export default function ChatPage() {
         type: "room_control",
         room_id: session.roomId,
         command_type,
-        target_user_id: targetMember.user_id,
+        target_session_id: targetMember.session_id,
         payload: command_type === "PROMOTE_USER" ? { role: "host" } : {}
       });
     }
@@ -3323,8 +3383,6 @@ export default function ChatPage() {
           <div className="meeting-scroll meeting-tool-panel flex-grow flex flex-col h-full overflow-hidden" role="tabpanel">
             <FilesPanel
               roomId={session.roomId}
-              sessionId={sessionId}
-              username={session.username}
               socket={socketRef.current}
               initialFiles={sharedFiles}
               currentUserRole={userRole}

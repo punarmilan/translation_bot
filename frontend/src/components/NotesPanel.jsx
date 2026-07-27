@@ -11,17 +11,20 @@ export default function NotesPanel({
 }) {
   const [content, setContent] = useState(initialContent);
   const [mode, setMode] = useState("edit"); // edit | preview
-  const [syncStatus, setSyncStatus] = useState("Saved"); // Saved | Saving...
+  const [syncStatus, setSyncStatus] = useState("Saved"); // Saved | Saving... | Not saved
   const saveTimeoutRef = useRef(null);
+  const pendingLocalEditRef = useRef(false);
 
-  // Sync initial content
+  // Sync initial content, but don't clobber an edit the user is still mid-typing
+  // (debounced save not yet flushed) with an incoming remote snapshot.
   useEffect(() => {
+    if (pendingLocalEditRef.current) return;
     setContent(initialContent);
   }, [initialContent]);
 
 
   const broadcastNotes = (newContent) => {
-    if (!socket || !allowEditing) return;
+    if (!socket || socket.readyState !== WebSocket.OPEN || !allowEditing) return false;
     socket.send(
       JSON.stringify({
         type: "notes_update",
@@ -29,6 +32,7 @@ export default function NotesPanel({
         notes_content: newContent,
       })
     );
+    return true;
   };
 
   const handleChange = (e) => {
@@ -36,12 +40,14 @@ export default function NotesPanel({
     setContent(val);
     onContentChange?.(val);
     setSyncStatus("Saving...");
+    pendingLocalEditRef.current = true;
 
     // Debounce broadcast
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(() => {
-      broadcastNotes(val);
-      setSyncStatus("Saved");
+      const sent = broadcastNotes(val);
+      pendingLocalEditRef.current = false;
+      setSyncStatus(sent ? "Saved" : "Not saved");
     }, 400);
   };
 
@@ -170,7 +176,16 @@ export default function NotesPanel({
         {/* Action icons */}
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1 text-[11px] text-ui-subtle">
-            <CheckCircle size={12} className={syncStatus === "Saved" ? "text-ui-success" : "text-amber-400 animate-pulse"} />
+            <CheckCircle
+              size={12}
+              className={
+                syncStatus === "Saved"
+                  ? "text-ui-success"
+                  : syncStatus === "Not saved"
+                    ? "text-ui-danger"
+                    : "text-amber-400 animate-pulse"
+              }
+            />
             <span>{syncStatus}</span>
           </div>
           <div className="flex items-center gap-1.5 border-l border-white/[0.06] pl-3">

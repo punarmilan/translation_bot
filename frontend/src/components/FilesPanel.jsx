@@ -14,8 +14,6 @@ import { BASE_URL } from "../services/api";
 
 export default function FilesPanel({
   roomId,
-  sessionId,
-  username,
   socket,
   initialFiles = [],
   currentUserRole,
@@ -30,9 +28,22 @@ export default function FilesPanel({
   const [successMsg, setSuccessMsg] = useState("");
   const fileInputRef = useRef(null);
 
+  const authHeaders = () => {
+    const token = localStorage.getItem("access_token");
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  };
+
+  const downloadUrl = (fileId) => {
+    const token = localStorage.getItem("access_token");
+    const base = `${BASE_URL}/api/meetings/${roomId}/files/${fileId}/download`;
+    return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+  };
+
   const fetchFiles = async () => {
     try {
-      const res = await fetch(`${BASE_URL}/api/meetings/${roomId}/files`);
+      const res = await fetch(`${BASE_URL}/api/meetings/${roomId}/files`, {
+        headers: authHeaders(),
+      });
       if (res.ok) {
         const data = await res.json();
         setFiles(data.files || []);
@@ -70,7 +81,6 @@ export default function FilesPanel({
 
     const formData = new FormData();
     formData.append("file", selectedFile);
-    formData.append("username", username);
 
     const xhr = new XMLHttpRequest();
     xhr.open("POST", `${BASE_URL}/api/meetings/${roomId}/files/upload`);
@@ -120,8 +130,9 @@ export default function FilesPanel({
   const handleDelete = async (fileId) => {
     if (!confirm("Are you sure you want to delete this file?")) return;
     try {
-      const res = await fetch(`${BASE_URL}/api/meetings/${roomId}/files/${fileId}?session_id=${sessionId}`, {
+      const res = await fetch(`${BASE_URL}/api/meetings/${roomId}/files/${fileId}`, {
         method: "DELETE",
+        headers: authHeaders(),
       });
       if (res.ok) {
         fetchFiles();
@@ -255,7 +266,7 @@ export default function FilesPanel({
                   <Eye size={13} />
                 </button>
                 <a
-                  href={`${BASE_URL}/api/meetings/${roomId}/files/${file.file_id}/download`}
+                  href={downloadUrl(file.file_id)}
                   download={file.filename}
                   className="p-1.5 rounded hover:bg-white/[0.06] text-ui-muted hover:text-brand-bg transition"
                   title="Download File"
@@ -287,15 +298,15 @@ export default function FilesPanel({
             </div>
             <div className="flex-1 overflow-auto flex items-center justify-center bg-brand-dark/20 rounded p-2">
               {previewFile.content_type?.startsWith("image/") ? (
-                <img src={`${BASE_URL}/api/meetings/${roomId}/files/${previewFile.file_id}/download`} alt={previewFile.filename} className="max-w-full max-h-[60vh] object-contain rounded" />
+                <img src={downloadUrl(previewFile.file_id)} alt={previewFile.filename} className="max-w-full max-h-[60vh] object-contain rounded" />
               ) : previewFile.content_type?.startsWith("video/") ? (
-                <video src={`${BASE_URL}/api/meetings/${roomId}/files/${previewFile.file_id}/download`} controls className="max-w-full max-h-[60vh] rounded" />
+                <video src={downloadUrl(previewFile.file_id)} controls className="max-w-full max-h-[60vh] rounded" />
               ) : previewFile.content_type?.startsWith("audio/") ? (
-                <audio src={`${BASE_URL}/api/meetings/${roomId}/files/${previewFile.file_id}/download`} controls className="w-full max-w-md" />
+                <audio src={downloadUrl(previewFile.file_id)} controls className="w-full max-w-md" />
               ) : (
                 <div className="text-center p-8 text-xs text-ui-subtle">
                   Preview not supported for this file type.
-                  <a href={`${BASE_URL}/api/meetings/${roomId}/files/${previewFile.file_id}/download`} className="block mt-4 text-brand-accent underline">Download and view locally</a>
+                  <a href={downloadUrl(previewFile.file_id)} className="block mt-4 text-brand-accent underline">Download and view locally</a>
                 </div>
               )}
             </div>

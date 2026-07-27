@@ -98,6 +98,34 @@ async def health_check() -> dict[str, str]:
 
 
 @app.get("/healthz", include_in_schema=False)
-async def readiness_check() -> dict[str, str]:
+async def readiness_check() -> dict:
+    # Database connectivity is load-bearing for the whole app, so a failure here
+    # propagates as a 500 and correctly fails the container's Docker HEALTHCHECK.
     await get_db().command("ping")
-    return {"status": "ok", "service": "chat-backend", "database": "ok"}
+
+    # Translation (LibreTranslate) and TTS (Piper) are degradable dependencies --
+    # the rest of the app (chat, whiteboard, notes, files, auth) works without
+    # them. Their status is reported here for visibility but intentionally does
+    # NOT change this endpoint's HTTP status code, so a downstream outage in one
+    # of them doesn't mark the whole backend container unhealthy in Docker/Caddy.
+    checks: dict[str, str] = {"database": "ok"}
+
+    import httpx
+
+    try:
+        libretranslate_url = get_settings().LIBRETRANSLATE_URL.rstrip("/")
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            response = await client.get(f"{libretranslate_url}/languages")
+            response.raise_for_status()
+        checks["libretranslate"] = "ok"
+    except Exception as exc:
+        checks["libretranslate"] = f"unreachable: {exc}"
+
+    try:
+        from app.tts.service import tts_service
+        checks["tts"] = "ok" if tts_service.status().get("ready") else "not_ready"
+    except Exception as exc:
+        checks["tts"] = f"error: {exc}"
+
+    overall = "ok" if all(value == "ok" for value in checks.values()) else "degraded"
+    return {"status": overall, "service": "chat-backend", "checks": checks}
