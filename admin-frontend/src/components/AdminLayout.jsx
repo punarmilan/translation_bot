@@ -1,6 +1,6 @@
 import {
   Activity, BarChart3, Bell, BookOpenText, ChevronDown, CircleUserRound, Database,
-  FileClock, Folder, Gauge, Languages, Layers, LayoutDashboard, Megaphone, Menu, MessageSquareText,
+  FileClock, Files, Folder, Gauge, Languages, LayoutDashboard, Megaphone, Menu, MessageSquareText,
   MicVocal, Palette, Search, Settings, ShieldCheck, SlidersHorizontal, ToggleLeft, Users, Video, X,
 } from "lucide-react";
 import { useState } from "react";
@@ -11,7 +11,7 @@ import { useAdminTheme } from "../state/AdminThemeContext";
 const navigation = [
   ["/admin/dashboard", LayoutDashboard, "Dashboard"],
   ["/admin/branding", Palette, "Brand & Theme"],
-  ["/admin/page-builder", Layers, "Page Builder"],
+  ["/admin/cms", Files, "Pages"],
   ["/admin/media-library", Folder, "Media Library"],
   ["/admin/users", Users, "Users"],
   ["/admin/meetings", Video, "Meetings"],

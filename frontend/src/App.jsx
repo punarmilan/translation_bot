@@ -5,6 +5,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import { ConfigProvider } from "./contexts/ConfigContext";
 
 import LandingPage from "./pages/LandingPage";
+import PreviewRoute from "./pages/PreviewRoute";
 import FeaturesPage from "./pages/FeaturesPage";
 import SolutionsPage from "./pages/SolutionsPage";
 import HowItWorksPage from "./pages/HowItWorksPage";
@@ -43,6 +44,7 @@ function AppRoutes() {
       <ScrollToTop />
       <Routes>
         <Route path="/" element={<LandingPage />} />
+        <Route path="/preview/:page" element={<PreviewRoute />} />
         <Route path="/features" element={<FeaturesPage />} />
         <Route path="/solutions" element={<SolutionsPage />} />
         <Route path="/how-it-works" element={<HowItWorksPage />} />

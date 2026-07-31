@@ -137,6 +137,19 @@ export async function getPublicContent() {
   return data;
 }
 
+// Generic CMS (Phase 1/2 foundation): fetches a page's published sections.
+export async function getCmsPage(page) {
+  const { data } = await client.get(`/api/public/cms/pages/${encodeURIComponent(page)}`);
+  return data;
+}
+
+// Draft (unpublished) sections for exactly one page, gated by a short-lived
+// token minted by the admin console -- used by the /preview/:page route.
+export async function getCmsPagePreview(page, token) {
+  const { data } = await client.get(`/api/public/cms/pages/${encodeURIComponent(page)}/preview`, { params: { token } });
+  return data;
+}
+
 export function resolveImageUrl(url) {
   if (!url) return "";
   if (url.startsWith("/admin-media/")) {

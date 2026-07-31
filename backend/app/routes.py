@@ -5,6 +5,7 @@ import hmac
 import json
 import logging
 import time
+import jwt
 from datetime import datetime
 from typing import (
     Annotated,
@@ -757,6 +758,53 @@ async def public_content() -> dict:
     cursor = db["admin_content"].find({"status": "published"})
     items = await cursor.to_list(length=100)
     return {"items": [{"key": item["key"], "content": item.get("content", {}), "version": item.get("version", 1)} for item in items]}
+
+
+@router.get("/api/public/cms/pages/{page}")
+async def public_cms_page(page: str) -> dict:
+    """Reads the generic CMS page collection directly, mirroring how
+    /api/public/content and /api/public/languages already read their
+    collections straight from the shared MongoDB database rather than through
+    admin-backend. Only the currently-published snapshot is ever exposed."""
+    db = get_db()
+    doc = await db["cms_pages"].find_one({"page": page})
+    if not doc or not doc.get("published"):
+        raise HTTPException(status_code=404, detail="No published content for this page")
+    published = doc["published"]
+    return {
+        "page": page,
+        "version": published.get("version", doc.get("version", 1)),
+        "sections": [s for s in published.get("sections", []) if not s.get("hidden")],
+        "seo": published.get("seo", {}),
+    }
+
+
+@router.get("/api/public/cms/pages/{page}/preview")
+async def public_cms_page_preview(page: str, token: str) -> dict:
+    """Serves DRAFT (unpublished) sections for exactly one page, gated by a
+    short-lived, page-scoped token minted by admin-backend's
+    POST /api/admin/cms/pages/{page}/preview-token. Verified with the shared
+    CMS_PREVIEW_SECRET rather than a cookie, since the token is embedded in a
+    URL the admin frontend opens in an <iframe> on a different origin."""
+    settings = get_settings()
+    try:
+        claims = jwt.decode(token, settings.CMS_PREVIEW_SECRET, algorithms=["HS256"])
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid or expired preview token")
+    if claims.get("purpose") != "cms_preview" or claims.get("page") != page:
+        raise HTTPException(status_code=401, detail="Invalid or expired preview token")
+
+    db = get_db()
+    doc = await db["cms_pages"].find_one({"page": page})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Page not found")
+    draft = doc.get("draft") or {}
+    return {
+        "page": page,
+        "preview": True,
+        "sections": [s for s in draft.get("sections", []) if not s.get("hidden")],
+        "seo": draft.get("seo", {}),
+    }
 
 
 @router.get("/api/public/translation-settings")

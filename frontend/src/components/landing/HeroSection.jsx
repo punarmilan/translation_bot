@@ -1,11 +1,19 @@
 import { Link } from "react-router-dom";
 import HeroIllustration from "./HeroIllustration";
+import SafeHtml from "../SafeHtml";
 import { Sparkles, ArrowRight, ShieldCheck, Zap, Globe2 } from "lucide-react";
 
 export default function HeroSection({ cms, user }) {
   const eyebrow = cms?.eyebrow || "Real-Time Multilingual Communication Platform";
   const title = cms?.title || "Meet, speak, and collaborate in any language instantly";
   const body = cms?.body || "VOXO translates live voice, captions, and chat naturally into each listener's preferred language without cloud tracking or external API keys.";
+  const primaryCtaText = cms?.cta_text || (user ? "Open Workspace" : "Get Started Free");
+  const primaryCtaLink = cms?.cta_link || (user ? "/chat" : "/signup");
+  const secondaryCtaText = cms?.secondary_cta_text || "Explore Features";
+  const secondaryCtaLink = cms?.secondary_cta_link || "/features";
+  const micro1 = cms?.micro_1_text || "100% Self-Hosted";
+  const micro2 = cms?.micro_2_text || "Sub-Second Speech";
+  const micro3 = cms?.micro_3_text || "Multi-Language";
 
   return (
     <section className="hero-section relative pt-28 pb-20 overflow-hidden">
@@ -26,23 +34,25 @@ export default function HeroSection({ cms, user }) {
               {title}
             </h1>
 
-            <p className="text-base md:text-lg text-ui-muted leading-relaxed mb-8 max-w-xl">
-              {body}
-            </p>
+            <SafeHtml
+              as="div"
+              className="text-base md:text-lg text-ui-muted leading-relaxed mb-8 max-w-xl"
+              html={body}
+            />
 
             <div className="flex flex-wrap items-center gap-4 w-full sm:w-auto">
               <Link
-                to={user ? "/chat" : "/signup"}
+                to={primaryCtaLink}
                 className="button button--primary button--large inline-flex items-center gap-2 shadow-lg shadow-brand-accent/25 hover:brightness-110"
               >
-                {user ? "Open Workspace" : "Get Started Free"}
+                {primaryCtaText}
                 <ArrowRight size={16} />
               </Link>
               <Link
-                to="/features"
+                to={secondaryCtaLink}
                 className="button button--secondary button--large inline-flex items-center gap-2"
               >
-                Explore Features
+                {secondaryCtaText}
               </Link>
             </div>
 
@@ -50,15 +60,15 @@ export default function HeroSection({ cms, user }) {
             <div className="grid grid-cols-3 gap-6 pt-10 mt-10 border-t border-white/10 w-full text-xs text-ui-subtle">
               <div className="flex items-center gap-2">
                 <ShieldCheck size={16} className="text-emerald-400" />
-                <span>100% Self-Hosted</span>
+                <span>{micro1}</span>
               </div>
               <div className="flex items-center gap-2">
                 <Zap size={16} className="text-amber-400" />
-                <span>Sub-Second Speech</span>
+                <span>{micro2}</span>
               </div>
               <div className="flex items-center gap-2">
                 <Globe2 size={16} className="text-brand-accent" />
-                <span>Multi-Language</span>
+                <span>{micro3}</span>
               </div>
             </div>
           </div>

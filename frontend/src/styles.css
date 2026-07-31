@@ -3725,6 +3725,90 @@ button:disabled {
   margin: 0;
 }
 
+/* Statistics Section */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 32px;
+  margin-top: 48px;
+  text-align: center;
+}
+
+.stat-card__icon {
+  font-size: 26px;
+  margin-bottom: 10px;
+}
+
+.stat-card__value {
+  font-size: clamp(28px, 4vw, 40px);
+  font-weight: 750;
+  color: var(--color-text-primary);
+  line-height: 1.1;
+}
+
+.stat-card__label {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+/* Trusted By Section */
+.trusted-by-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 40px;
+  margin-top: 32px;
+}
+
+.trusted-by-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+}
+
+.trusted-by-logo:hover {
+  opacity: 1;
+}
+
+.trusted-by-logo__img {
+  max-height: 32px;
+  max-width: 140px;
+  object-fit: contain;
+  filter: grayscale(1);
+}
+
+.trusted-by-logo__text {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+/* Footer CTA Section */
+.footer-cta-section {
+  padding: 64px 0;
+  text-align: center;
+  border-top: 1px solid var(--color-border);
+}
+
+.footer-cta-section__inner {
+  max-width: 640px;
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.footer-cta-section h2 {
+  margin: 0;
+  font-size: clamp(24px, 3vw, 34px);
+  font-weight: 700;
+}
+
 /* 3-Tier SaaS Pricing Section */
 .pricing-section {
   padding: 90px 0;
@@ -3953,4 +4037,100 @@ button:disabled {
   .bento-col-12, .bento-col-8, .bento-col-6, .bento-col-4 {
     grid-column: span 1;
   }
+}
+
+/* Generic CMS foundation (Phase 1): shared markup for any page rendered
+   through GenericSectionRenderer, not tied to any single page's design. */
+.cms-generic-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 24px;
+  margin-top: 32px;
+}
+
+.cms-generic-card {
+  padding: 24px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.cms-generic-card__icon {
+  font-size: 28px;
+  margin-bottom: 12px;
+}
+
+.cms-generic-card__image {
+  width: 100%;
+  border-radius: 10px;
+  margin-bottom: 12px;
+  object-fit: cover;
+}
+
+.cms-generic-card--testimonial footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.cms-generic-card--testimonial footer img {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.cms-generic-card--testimonial footer small {
+  display: block;
+  opacity: 0.7;
+}
+
+.cms-generic-faq-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.cms-generic-faq-item {
+  padding: 16px 20px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.cms-generic-faq-item summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.cms-generic-faq-item p {
+  margin: 10px 0 0;
+  opacity: 0.8;
+}
+
+.cms-generic-cta-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.cms-generic-hero__image {
+  width: 100%;
+  max-width: 720px;
+  border-radius: 16px;
+  margin-top: 24px;
+}
+
+.cms-preview-banner {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  padding: 8px 16px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #1a1200;
+  background: #fbbf24;
 }

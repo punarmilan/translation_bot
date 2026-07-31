@@ -102,12 +102,16 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "pytest>=8,<10" pip-audit -r backend/requirements.txt -r admin-backend/requirements.txt
+          python -m pip install "pytest>=8,<10" "mongomock>=4,<5" "mongomock-motor>=0.0.30,<0.1" pip-audit -r backend/requirements.txt -r admin-backend/requirements.txt
           python -m pip_audit --strict -r backend/requirements.txt
           python -m pip_audit --strict -r admin-backend/requirements.txt
 
       - name: Test public backend
         working-directory: backend
+        run: python -m pytest tests
+
+      - name: Test admin backend
+        working-directory: admin-backend
         run: python -m pytest tests
 
       - name: Compile admin backend

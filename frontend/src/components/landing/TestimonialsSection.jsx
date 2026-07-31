@@ -1,6 +1,7 @@
 import React from "react";
 import { Star, Quote, Award } from "lucide-react";
 import { resolveImageUrl } from "../../services/api";
+import SafeHtml from "../SafeHtml";
 
 const defaultTestimonials = [
   {
@@ -67,9 +68,11 @@ export default function TestimonialsSection({ data }) {
           <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-brand-bg">
             {title}
           </h2>
-          <p className="text-ui-muted mt-3 text-sm md:text-base leading-relaxed">
-            {body}
-          </p>
+          <SafeHtml
+            as="div"
+            className="text-ui-muted mt-3 text-sm md:text-base leading-relaxed"
+            html={body}
+          />
         </div>
 
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">

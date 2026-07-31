@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     CONTROL_PLANE_SECRET: str = "replace-with-shared-control-plane-secret"
     CONTROL_PLANE_ACK_TIMEOUT_SECONDS: float = 4.0
     CONTROL_PLANE_REDIS_TIMEOUT_SECONDS: float = 3.0
+    CMS_PREVIEW_SECRET: str = "replace-with-a-shared-cms-preview-secret"
+    CMS_PREVIEW_TOKEN_TTL_SECONDS: int = 300
     LIBRETRANSLATE_URL: str = "http://127.0.0.1:5000"
     HEALTH_VERIFY_TLS: bool = True
     MEDIA_ROOT: str = "./data/media"

@@ -4,6 +4,7 @@ import AdminLayout from "./components/AdminLayout";
 import ProtectedAdminRoute from "./components/ProtectedAdminRoute";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import AuditLogsPage from "./pages/AuditLogsPage";
+import CmsPage from "./pages/CmsPage";
 import ContentPage from "./pages/ContentPage";
 import DashboardPage from "./pages/DashboardPage";
 import ForbiddenPage from "./pages/ForbiddenPage";
@@ -19,7 +20,6 @@ import UsersPage from "./pages/UsersPage";
 import LanguagesPage from "./pages/LanguagesPage";
 import VoicesPage from "./pages/VoicesPage";
 import BrandPage from "./pages/BrandPage";
-import PageBuilderPage from "./pages/PageBuilderPage";
 import MediaLibraryPage from "./pages/MediaLibraryPage";
 import FeedbackPage from "./pages/FeedbackPage";
 
@@ -66,7 +66,8 @@ function AdminAppRoutes() {
         <Route element={<AdminLayout />}>
           <Route path="/admin/dashboard" element={<DashboardPage />} />
           <Route path="/admin/branding" element={<BrandPage />} />
-          <Route path="/admin/page-builder" element={<PageBuilderPage />} />
+          <Route path="/admin/cms" element={<CmsPage />} />
+          <Route path="/admin/page-builder" element={<Navigate to="/admin/cms" replace />} />
           <Route path="/admin/media-library" element={<MediaLibraryPage />} />
           <Route path="/admin/users" element={<UsersPage />} />
           <Route path="/admin/meetings" element={<MeetingsPage />} />

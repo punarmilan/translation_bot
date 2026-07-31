@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getPublicContent, resolveImageUrl } from "../services/api";
-import { useConfig } from "../contexts/ConfigContext";
+import { getCmsPage, getCmsPagePreview, getPublicContent, resolveImageUrl } from "../services/api";
 import {
   AudioLines,
   BriefcaseBusiness,
@@ -20,6 +19,10 @@ import Footer from "../components/landing/Footer";
 import HeroSection from "../components/landing/HeroSection";
 import Navbar from "../components/landing/Navbar";
 import TestimonialsSection from "../components/landing/TestimonialsSection";
+import StatisticsSection from "../components/landing/StatisticsSection";
+import TrustedBySection from "../components/landing/TrustedBySection";
+import FooterCtaSection from "../components/landing/FooterCtaSection";
+import SafeHtml from "../components/SafeHtml";
 import { useAuth } from "../contexts/AuthContext";
 
 const row1 = [
@@ -81,7 +84,7 @@ function DynamicShowcase({ data }) {
         <header className="section-heading section-heading--center">
           <p className="section-eyebrow">{eyebrow}</p>
           <h2>{title}</h2>
-          <p>{body}</p>
+          <SafeHtml as="div" html={body} />
         </header>
       </div>
 
@@ -114,7 +117,7 @@ function CoreBenefits({ data }) {
         <header className="section-heading section-heading--center">
           <p className="section-eyebrow">{eyebrow}</p>
           <h2>{title}</h2>
-          {body && <p style={{ color: "var(--muted)", fontSize: "14px", marginTop: "8px" }}>{body}</p>}
+          <SafeHtml as="div" className="section-heading__body" html={body} style={{ color: "var(--muted)", fontSize: "14px", marginTop: "8px" }} />
         </header>
 
         <div className="benefits-grid">
@@ -159,7 +162,7 @@ function CustomSectionBlock({ data }) {
         <header className="section-heading section-heading--center">
           {data.eyebrow && <p className="section-eyebrow">{data.eyebrow}</p>}
           <h2>{data.title}</h2>
-          {data.body && <p style={{ color: "var(--muted)", fontSize: "14px", marginTop: "8px" }}>{data.body}</p>}
+          <SafeHtml as="div" html={data.body} style={{ color: "var(--muted)", fontSize: "14px", marginTop: "8px" }} />
         </header>
 
         {data.cards && data.cards.length > 0 && (
@@ -184,10 +187,52 @@ function CustomSectionBlock({ data }) {
   );
 }
 
-export default function LandingPage() {
+const FALLBACK_SECTIONS = [
+  { type: "hero", key: "sec_hero" },
+  { type: "benefits", key: "sec_benefits" },
+  { type: "showcase", key: "sec_showcase" },
+  { type: "testimonials", key: "sec_testimonials" },
+  { type: "faq", key: "sec_faq" },
+  { type: "cta", key: "sec_cta" },
+];
+
+// Only overrides document metadata when the CMS record actually sets a
+// value -- until an admin fills in SEO fields, the static defaults already
+// baked into index.html are left untouched, preserving current behavior.
+function applySeo(seo) {
+  if (!seo) return;
+
+  const setMeta = (selector, attr, value) => {
+    if (!value) return;
+    let tag = document.head.querySelector(selector);
+    if (!tag) {
+      tag = document.createElement("meta");
+      const [, attrName, attrValue] = selector.match(/\[(.+?)="(.+?)"\]/) || [];
+      if (attrName) tag.setAttribute(attrName, attrValue);
+      document.head.appendChild(tag);
+    }
+    tag.setAttribute(attr, value);
+  };
+
+  if (seo.meta_title) {
+    document.title = seo.meta_title;
+    setMeta('meta[property="og:title"]', "content", seo.meta_title);
+    setMeta('meta[name="twitter:title"]', "content", seo.meta_title);
+  }
+  if (seo.meta_description) {
+    setMeta('meta[name="description"]', "content", seo.meta_description);
+    setMeta('meta[property="og:description"]', "content", seo.meta_description);
+    setMeta('meta[name="twitter:description"]', "content", seo.meta_description);
+  }
+  if (seo.og_image_url) {
+    setMeta('meta[property="og:image"]', "content", resolveImageUrl(seo.og_image_url));
+  }
+}
+
+export default function LandingPage({ previewToken } = {}) {
   const { user } = useAuth();
-  const { sections, branding } = useConfig();
   const [content, setContent] = useState({});
+  const [sections, setSections] = useState([]);
 
   useEffect(() => {
     getPublicContent()
@@ -201,70 +246,73 @@ export default function LandingPage() {
       .catch((err) => console.warn("Failed to load public CMS content", err));
   }, []);
 
-  const activeSections = sections && sections.length > 0
+  useEffect(() => {
+    const fetchSections = previewToken
+      ? getCmsPagePreview("landing", previewToken)
+      : getCmsPage("landing");
+    fetchSections
+      .then((res) => {
+        setSections(res.sections || []);
+        applySeo(res.seo);
+      })
+      .catch((err) => console.warn("Failed to load landing page CMS content", err));
+  }, [previewToken]);
+
+  const activeSections = sections.length > 0
     ? sections.filter((s) => !s.hidden)
-    : [
-        { type: "hero", id: "sec_hero" },
-        { type: "benefits", id: "sec_benefits" },
-        { type: "showcase", id: "sec_showcase" },
-        { type: "testimonials", id: "sec_testimonials" },
-        { type: "faq", id: "sec_faq" },
-        { type: "cta", id: "sec_cta" },
-      ];
+    : FALLBACK_SECTIONS;
 
   return (
     <div className="landing-page bg-brand-dark min-h-screen">
+      {previewToken && (
+        <div className="cms-preview-banner">
+          Draft preview — this content is not published yet.
+        </div>
+      )}
       <Navbar user={user} />
       <main>
         {activeSections.map((sec, idx) => {
-          const sType = sec.type || sec.id;
-          if (sType === "hero" || sec.id === "sec_hero") {
+          const sType = sec.type || sec.key;
+          if (sType === "hero") {
+            return <HeroSection key={sec.key || idx} user={user} cms={sec} />;
+          }
+          if (sType === "benefits") {
+            return <CoreBenefits key={sec.key || idx} data={sec} />;
+          }
+          if (sType === "showcase") {
+            return <DynamicShowcase key={sec.key || idx} data={sec} />;
+          }
+          if (sType === "testimonials") {
+            return <TestimonialsSection key={sec.key || idx} data={sec} />;
+          }
+          if (sType === "statistics") {
+            return <StatisticsSection key={sec.key || idx} data={sec} />;
+          }
+          if (sType === "trusted_by") {
+            return <TrustedBySection key={sec.key || idx} data={sec} />;
+          }
+          if (sType === "faq") {
             return (
-              <HeroSection
-                key={sec.id || idx}
-                user={user}
-                cms={{
-                  ...(content["landing.hero"] || {}),
-                  eyebrow: sec.eyebrow || content["landing.hero"]?.eyebrow,
-                  title: sec.title || content["landing.hero"]?.title,
-                  body: sec.body || content["landing.hero"]?.body,
-                  cta_text: sec.cta_text,
-                  cta_link: sec.cta_link,
-                }}
-              />
-            );
-          }
-          if (sType === "benefits" || sec.id === "sec_benefits") {
-            return <CoreBenefits key={sec.id || idx} data={sec} />;
-          }
-          if (sType === "showcase" || sec.id === "sec_showcase") {
-            return <DynamicShowcase key={sec.id || idx} data={sec} />;
-          }
-          if (sType === "testimonials" || sec.id === "sec_testimonials") {
-            return <TestimonialsSection key={sec.id || idx} data={sec} />;
-          }
-          if (sType === "faq" || sec.id === "sec_faq") {
-            return (
-              <section key={sec.id || idx} id="faq" className="landing-section">
+              <section key={sec.key || idx} id="faq" className="landing-section">
                 <div className="landing-shell faq-layout">
                   <header className="section-heading">
                     <p className="section-eyebrow">{sec.eyebrow || "FAQ"}</p>
                     <h2>{sec.title || "Questions before your first meeting"}</h2>
-                    <p>{sec.body || "Practical answers about languages, invitations, messaging, and device support."}</p>
+                    <SafeHtml as="div" html={sec.body || "Practical answers about languages, invitations, messaging, and device support."} />
                   </header>
                   <FAQ cms={content["site.faqs"]} customCards={sec.cards} />
                 </div>
               </section>
             );
           }
-          if (sType === "cta" || sec.id === "sec_cta") {
+          if (sType === "cta") {
             return (
-              <section key={sec.id || idx} className="cta-section">
+              <section key={sec.key || idx} className="cta-section">
                 <div className="landing-shell cta-section__inner">
                   <div>
                     <p className="section-eyebrow">{sec.eyebrow || "Ready to start?"}</p>
                     <h2>{sec.title || "Ready to Remove Language Barriers with VOXO?"}</h2>
-                    <p>{sec.body || "Start your first meeting today and let everyone participate in the language they know best."}</p>
+                    <SafeHtml as="div" html={sec.body || "Start your first meeting today and let everyone participate in the language they know best."} />
                   </div>
                   <div>
                     <Link to={user ? "/chat" : "/signup"} className="button button--primary button--large">
@@ -278,7 +326,10 @@ export default function LandingPage() {
               </section>
             );
           }
-          return <CustomSectionBlock key={sec.id || idx} data={sec} />;
+          if (sType === "footer_cta") {
+            return <FooterCtaSection key={sec.key || idx} data={sec} user={user} />;
+          }
+          return <CustomSectionBlock key={sec.key || idx} data={sec} />;
         })}
       </main>
       <Footer user={user} cms={content["site.footer"]} />

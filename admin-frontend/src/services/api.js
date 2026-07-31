@@ -169,4 +169,49 @@ export async function getMeetingParticipants(roomId) {
   return (await api.get(`/api/admin/meetings/${encodeURIComponent(roomId)}/participants`)).data;
 }
 
+// Generic CMS (Phase 1 foundation) -- one set of endpoints reused by every page.
+export async function getCmsSectionTypes() {
+  return (await api.get("/api/admin/cms/section-types")).data;
+}
+
+export async function listCmsPages() {
+  return (await api.get("/api/admin/cms/pages")).data;
+}
+
+export async function createCmsPage(body) {
+  return (await api.post("/api/admin/cms/pages", body)).data;
+}
+
+export async function getCmsPage(page) {
+  return (await api.get(`/api/admin/cms/pages/${encodeURIComponent(page)}`)).data;
+}
+
+export async function deleteCmsPage(page) {
+  return (await api.delete(`/api/admin/cms/pages/${encodeURIComponent(page)}`)).data;
+}
+
+export async function saveCmsPageDraft(page, sections, seo) {
+  return (await api.put(`/api/admin/cms/pages/${encodeURIComponent(page)}`, { sections, seo })).data;
+}
+
+export async function addCmsSection(page, type, name) {
+  return (await api.post(`/api/admin/cms/pages/${encodeURIComponent(page)}/sections`, { type, name })).data;
+}
+
+export async function publishCmsPage(page) {
+  return (await api.post(`/api/admin/cms/pages/${encodeURIComponent(page)}/publish`)).data;
+}
+
+export async function revertCmsPage(page) {
+  return (await api.post(`/api/admin/cms/pages/${encodeURIComponent(page)}/revert`)).data;
+}
+
+export async function getCmsPageVersions(page) {
+  return (await api.get(`/api/admin/cms/pages/${encodeURIComponent(page)}/versions`)).data;
+}
+
+export async function mintCmsPreviewToken(page) {
+  return (await api.post(`/api/admin/cms/pages/${encodeURIComponent(page)}/preview-token`)).data;
+}
+
 export default api;

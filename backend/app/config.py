@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     CONTROL_PLANE_SECRET: str = "replace-with-shared-control-plane-secret"
     CONTROL_PLANE_REDIS_TIMEOUT_SECONDS: float = 3.0
+    CMS_PREVIEW_SECRET: str = "replace-with-a-shared-cms-preview-secret"
     TRANSLATION_TIMEOUT_SECONDS: float = 8.0
     TRANSLATION_CACHE_MAX_SIZE: int = 512
     MIN_DETECTION_CONFIDENCE: float = 0.72
