@@ -17,7 +17,7 @@ from app.repositories.invitation_repository import AdminInvitationRepository
 from app.repositories.platform_repository import PlatformRepository
 from app.repositories.session_repository import AdminSessionRepository
 from app.repositories.user_repository import AdminUserRepository
-from app.routers import auth, cms, dashboard, media, meetings, platform, system, users, enterprise
+from app.routers import auth, cms, dashboard, infrastructure, media, meetings, platform, system, users, enterprise
 
 
 
@@ -90,6 +90,7 @@ app.include_router(cms.public_router)
 app.include_router(media.router)
 app.include_router(system.router)
 app.include_router(enterprise.router)
+app.include_router(infrastructure.router)
 
 
 media_root = Path(get_settings().MEDIA_ROOT).resolve()

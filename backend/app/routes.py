@@ -648,6 +648,19 @@ async def public_page_builder() -> dict:
     return {"sections": sections}
 
 
+@router.get("/api/internal/realtime-stats")
+async def internal_realtime_stats() -> dict:
+    """Read-only counters for the admin console's System Health page.
+
+    Does not touch signaling/ICE/room logic -- just reports the size of
+    the already-existing in-memory dicts on the running connection manager.
+    """
+    return {
+        "active_connections": len(manager.sessions),
+        "active_rooms": len(manager.rooms),
+    }
+
+
 @router.post("/api/internal/reload-config")
 async def internal_reload_config(payload: dict | None = None) -> dict:
     payload = payload or {}

@@ -8,7 +8,9 @@ export default function BrandPage() {
     product_name: "VOXO",
     site_title: "VOXO — Real-Time Multilingual Platform",
     logo_url: "",
+    logo_dark_url: "",
     favicon_url: "",
+    favicon_dark_url: "",
     og_image: "",
     twitter_card: "",
     meta_description: "Meet, speak, and collaborate in any language instantly with self-hosted AI voice translation.",
@@ -17,12 +19,17 @@ export default function BrandPage() {
     primary_color: "#0F172A",
     secondary_color: "#1E293B",
     font_family: "Inter, system-ui, sans-serif",
+    heading_font_family: "",
     border_radius: "0.75rem",
     button_style: "glass",
     footer_text: "Meet, speak, and collaborate across languages.",
     copyright_text: "© 2026 VOXO by WorknAI Technologies India Pvt. Ltd. All rights reserved.",
     company_name: "WorknAI Technologies India Pvt. Ltd.",
     company_email: "support@worknai.tech",
+    social_twitter: "",
+    social_linkedin: "",
+    social_github: "",
+    social_youtube: "",
   });
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -125,12 +132,21 @@ export default function BrandPage() {
           </header>
           <div className="admin-form-grid">
             <label>
-              <span>Logo URL / Path</span>
+              <span>Logo URL / Path (light backgrounds)</span>
               <input
                 type="text"
                 value={form.logo_url}
                 onChange={(e) => handleChange("logo_url", e.target.value)}
                 placeholder="/images/logo.png or https://cdn.voxo.ai/logo.png"
+              />
+            </label>
+            <label>
+              <span>Logo URL / Path (dark backgrounds)</span>
+              <input
+                type="text"
+                value={form.logo_dark_url}
+                onChange={(e) => handleChange("logo_dark_url", e.target.value)}
+                placeholder="Falls back to the light-background logo if left blank"
               />
             </label>
             <label>
@@ -140,6 +156,15 @@ export default function BrandPage() {
                 value={form.favicon_url}
                 onChange={(e) => handleChange("favicon_url", e.target.value)}
                 placeholder="/favicon.ico or https://cdn.voxo.ai/favicon.ico"
+              />
+            </label>
+            <label>
+              <span>Favicon URL / Path (dark mode)</span>
+              <input
+                type="text"
+                value={form.favicon_dark_url}
+                onChange={(e) => handleChange("favicon_dark_url", e.target.value)}
+                placeholder="Falls back to the standard favicon if left blank"
               />
             </label>
             <label>
@@ -222,11 +247,21 @@ export default function BrandPage() {
             </label>
 
             <label>
-              <span>Font Family</span>
+              <span>Body Font Family</span>
               <input
                 type="text"
                 value={form.font_family}
                 onChange={(e) => handleChange("font_family", e.target.value)}
+              />
+            </label>
+
+            <label>
+              <span>Heading Font Family</span>
+              <input
+                type="text"
+                value={form.heading_font_family}
+                onChange={(e) => handleChange("heading_font_family", e.target.value)}
+                placeholder="Falls back to the body font if left blank"
               />
             </label>
 
@@ -290,6 +325,52 @@ export default function BrandPage() {
                 type="text"
                 value={form.copyright_text}
                 onChange={(e) => handleChange("copyright_text", e.target.value)}
+              />
+            </label>
+          </div>
+        </section>
+
+        {/* Panel 5: Social Links */}
+        <section className="admin-settings-panel">
+          <header>
+            <span>Social Presence</span>
+            <h2>Social Links</h2>
+          </header>
+          <div className="admin-form-grid">
+            <label>
+              <span>Twitter / X</span>
+              <input
+                type="text"
+                value={form.social_twitter}
+                onChange={(e) => handleChange("social_twitter", e.target.value)}
+                placeholder="https://x.com/voxo"
+              />
+            </label>
+            <label>
+              <span>LinkedIn</span>
+              <input
+                type="text"
+                value={form.social_linkedin}
+                onChange={(e) => handleChange("social_linkedin", e.target.value)}
+                placeholder="https://linkedin.com/company/voxo"
+              />
+            </label>
+            <label>
+              <span>GitHub</span>
+              <input
+                type="text"
+                value={form.social_github}
+                onChange={(e) => handleChange("social_github", e.target.value)}
+                placeholder="https://github.com/voxo"
+              />
+            </label>
+            <label>
+              <span>YouTube</span>
+              <input
+                type="text"
+                value={form.social_youtube}
+                onChange={(e) => handleChange("social_youtube", e.target.value)}
+                placeholder="https://youtube.com/@voxo"
               />
             </label>
           </div>

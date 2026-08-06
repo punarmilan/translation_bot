@@ -374,6 +374,91 @@ async def public_translation_settings() -> dict:
     return {"values": {key: value for key, value in values.items() if key in safe_keys}}
 
 
+@router.get("/ai-settings")
+async def get_ai_settings(_: Annotated[dict, Depends(require_permission("translation.read"))]) -> dict:
+    defaults = {
+        "stt_provider": "faster_whisper",
+        "whisper_model": "base",
+        "whisper_device": "cpu",
+        "whisper_compute_type": "int8",
+        "whisper_beam_size": 5,
+        "tts_provider": "piper",
+        "piper_default_voice": "en-neutral",
+        "piper_timeout_seconds": 45,
+        "translation_provider": "libretranslate",
+        "translation_provider_url": "http://127.0.0.1:5000",
+        "voice_auto_download": False,
+    }
+    item = await PlatformRepository(get_db()).get_by_key("platform_settings", "ai_models")
+    return {"key": "ai_models", "values": item.get("values", defaults) if item else defaults}
+
+
+@router.patch("/ai-settings")
+async def update_ai_settings(body: SettingsUpdate, admin: Annotated[dict, Depends(require_permission("translation.write"))]) -> dict:
+    item = await PlatformRepository(get_db()).upsert_by_key("platform_settings", "ai_models", {"values": body.values, "updated_by": str(admin["_id"])})
+    await AuditRepository(get_db()).record(str(admin["_id"]), "ai_settings.update", "settings", "ai_models")
+
+    from app.control_plane import control_plane
+    import asyncio
+    asyncio.create_task(
+        control_plane.publish_and_wait(
+            command_type="UPDATE_SETTINGS",
+            actor_id=str(admin["_id"]),
+            actor_email=admin.get("email", ""),
+            payload={"key": "ai_models", "values": body.values}
+        )
+    )
+    return serialize(item)
+
+
+@router.get("/meeting-policy")
+async def get_meeting_policy(_: Annotated[dict, Depends(require_permission("settings.read"))]) -> dict:
+    defaults = {
+        "max_participants": 12,
+        "waiting_room_enabled": False,
+        "screen_sharing_enabled": True,
+        "recording_enabled_default": False,
+        "translation_enabled_default": True,
+        "captions_enabled_default": True,
+        "meeting_timeout_minutes": 240,
+        "idle_participant_timeout_minutes": 30,
+        "allow_guest_join": True,
+        "require_host_to_start": False,
+    }
+    item = await PlatformRepository(get_db()).get_by_key("platform_settings", "meeting_policy")
+    return {"key": "meeting_policy", "values": item.get("values", defaults) if item else defaults}
+
+
+@router.patch("/meeting-policy")
+async def update_meeting_policy(body: SettingsUpdate, admin: Annotated[dict, Depends(require_permission("settings.write"))]) -> dict:
+    item = await PlatformRepository(get_db()).upsert_by_key("platform_settings", "meeting_policy", {"values": body.values, "updated_by": str(admin["_id"])})
+    await AuditRepository(get_db()).record(str(admin["_id"]), "meeting_policy.update", "settings", "meeting_policy")
+
+    from app.control_plane import control_plane
+    import asyncio
+    asyncio.create_task(
+        control_plane.publish_and_wait(
+            command_type="UPDATE_SETTINGS",
+            actor_id=str(admin["_id"]),
+            actor_email=admin.get("email", ""),
+            payload={"key": "meeting_policy", "values": body.values}
+        )
+    )
+    return serialize(item)
+
+
+@public_router.get("/meeting-policy")
+async def public_meeting_policy() -> dict:
+    item = await PlatformRepository(get_db()).get_by_key("platform_settings", "meeting_policy")
+    values = item.get("values", {}) if item else {}
+    safe_keys = {
+        "max_participants", "waiting_room_enabled", "screen_sharing_enabled",
+        "recording_enabled_default", "translation_enabled_default", "captions_enabled_default",
+        "meeting_timeout_minutes", "idle_participant_timeout_minutes", "allow_guest_join", "require_host_to_start",
+    }
+    return {"values": {key: value for key, value in values.items() if key in safe_keys}}
+
+
 @router.get("/settings")
 async def get_settings(_: Annotated[dict, Depends(require_permission("settings.read"))]) -> dict:
     defaults = {
@@ -392,7 +477,9 @@ async def get_branding_settings(_: Annotated[dict, Depends(require_permission("s
         "product_name": "VOXO",
         "site_title": "VOXO — Real-Time Multilingual Platform",
         "logo_url": "",
+        "logo_dark_url": "",
         "favicon_url": "",
+        "favicon_dark_url": "",
         "og_image": "",
         "twitter_card": "",
         "meta_description": "Meet, speak, and collaborate in any language instantly with self-hosted AI voice translation.",
@@ -401,12 +488,17 @@ async def get_branding_settings(_: Annotated[dict, Depends(require_permission("s
         "primary_color": "#0F172A",
         "secondary_color": "#1E293B",
         "font_family": "Inter, system-ui, sans-serif",
+        "heading_font_family": "",
         "border_radius": "0.75rem",
         "button_style": "glass",
         "footer_text": "Meet, speak, and collaborate across languages.",
         "copyright_text": "© 2026 VOXO by WorknAI Technologies India Pvt. Ltd. All rights reserved.",
         "company_name": "WorknAI Technologies India Pvt. Ltd.",
         "company_email": "support@worknai.tech",
+        "social_twitter": "",
+        "social_linkedin": "",
+        "social_github": "",
+        "social_youtube": "",
     }
     item = await PlatformRepository(get_db()).get_by_key("platform_settings", "branding")
     return {"key": "branding", "values": item.get("values", defaults) if item else defaults}

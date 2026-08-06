@@ -65,6 +65,21 @@ async def system_health(_: Annotated[dict, Depends(require_permission("system.re
     )
     disk = shutil.disk_usage(".")
     network = psutil.net_io_counters()
+
+    realtime_stats = None
+    try:
+        async with httpx.AsyncClient(timeout=2.5, verify=settings.HEALTH_VERIFY_TLS) as client:
+            response = await client.get(f"{settings.PUBLIC_BACKEND_URL.rstrip('/')}/api/internal/realtime-stats")
+            if response.status_code == 200:
+                realtime_stats = response.json()
+    except Exception:
+        realtime_stats = None
+
+    latency_rows = await get_db()["translation_logs"].aggregate([
+        {"$match": {"latency_ms": {"$type": "number"}}},
+        {"$group": {"_id": None, "average": {"$avg": "$latency_ms"}, "count": {"$sum": 1}}},
+    ]).to_list(length=1)
+
     return {
         "status": "operational" if mongo["status"] == "healthy" else "degraded",
         "services": [{"name": "Admin FastAPI", "status": "healthy", "latency_ms": 0, "detail": "Current request"}, mongo, redis_service, *probes],
@@ -79,6 +94,24 @@ async def system_health(_: Annotated[dict, Depends(require_permission("system.re
             "queue_length": await get_db()["admin_commands"].count_documents({"status": "queued"}),
             "connected_users": await get_db()["users"].count_documents({"is_online": True, "deleted_at": {"$exists": False}}),
             "uptime_seconds": round(time.time() - STARTED_AT),
+        },
+        "realtime": {
+            "active_meetings": await get_db()["rooms"].count_documents({"is_active": True}),
+            "active_websocket_connections": realtime_stats.get("active_connections") if realtime_stats else None,
+            "active_rooms_in_memory": realtime_stats.get("active_rooms") if realtime_stats else None,
+            "reachable": realtime_stats is not None,
+        },
+        "latency": {
+            # Only what's actually persisted today: a single round-trip figure
+            # per voice-translation delivery (backend/app/repositories/translation_log_repository.py).
+            # Per-stage STT/MT/TTS breakdown is computed in-memory at
+            # backend/app/websocket_manager.py's voice pipeline but not yet
+            # persisted separately -- see ADMIN_IMPLEMENTATION_PLAN.md.
+            "average_round_trip_ms": round(latency_rows[0]["average"]) if latency_rows else None,
+            "sample_count": latency_rows[0]["count"] if latency_rows else 0,
+            "stt_ms": None,
+            "translation_ms": None,
+            "tts_ms": None,
         },
         "checked_at": datetime.now(timezone.utc).isoformat(),
     }

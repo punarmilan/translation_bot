@@ -117,6 +117,10 @@ export async function patchAdmin(path, body) {
   return (await api.patch(`/api/admin${path}`, body)).data;
 }
 
+export async function deleteAdmin(path) {
+  return (await api.delete(`/api/admin${path}`)).data;
+}
+
 export async function exportAuditLogs(params) {
   return (await api.get("/api/admin/logs/export.csv", { params, responseType: "blob" })).data;
 }

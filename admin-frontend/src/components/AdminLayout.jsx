@@ -1,7 +1,7 @@
 import {
-  Activity, BarChart3, Bell, BookOpenText, ChevronDown, CircleUserRound, Database,
+  Activity, BarChart3, Bell, BookOpenText, BrainCircuit, Building2, ChevronDown, CircleUserRound, Database,
   FileClock, Files, Folder, Gauge, Languages, LayoutDashboard, Megaphone, Menu, MessageSquareText,
-  MicVocal, Palette, Search, Settings, ShieldCheck, SlidersHorizontal, ToggleLeft, Users, Video, X,
+  MicVocal, Network, Palette, Search, Settings, ShieldCheck, SlidersHorizontal, ToggleLeft, Users, Video, X,
 } from "lucide-react";
 import { useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -21,6 +21,11 @@ const navigation = [
   ["/admin/languages", Languages, "Languages"],
   ["/admin/voices", MicVocal, "Voice Models"],
   ["/admin/translation", SlidersHorizontal, "Translation Settings"],
+  ["/admin/ai-models", BrainCircuit, "AI Models"],
+  ["/admin/translation-modes", SlidersHorizontal, "Translation Modes"],
+  ["/admin/glossary", BookOpenText, "Glossary"],
+  ["/admin/meeting-policy", Video, "Meeting Policy"],
+  ["/admin/organizations", Building2, "Organizations"],
   ["/admin/analytics", BarChart3, "Analytics"],
   ["/admin/feedback", MessageSquareText, "Feedback"],
   ["/admin/announcements", Megaphone, "Announcements"],
@@ -28,6 +33,7 @@ const navigation = [
   ["/admin/settings", Settings, "Settings"],
   ["/admin/logs", FileClock, "Audit Logs"],
   ["/admin/system", Activity, "System Health"],
+  ["/admin/infrastructure", Network, "Infrastructure"],
 ];
 
 export default function AdminLayout() {

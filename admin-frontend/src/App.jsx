@@ -22,6 +22,9 @@ import VoicesPage from "./pages/VoicesPage";
 import BrandPage from "./pages/BrandPage";
 import MediaLibraryPage from "./pages/MediaLibraryPage";
 import FeedbackPage from "./pages/FeedbackPage";
+import GlossaryPage from "./pages/GlossaryPage";
+import OrganizationsPage from "./pages/OrganizationsPage";
+import InfrastructurePage from "./pages/InfrastructurePage";
 
 class ErrorBoundary extends Component {
   constructor(props) {
@@ -79,6 +82,12 @@ function AdminAppRoutes() {
           <Route path="/admin/languages" element={<LanguagesPage />} />
           <Route path="/admin/voices" element={<VoicesPage />} />
           <Route path="/admin/translation" element={<SettingsPage module="translation-settings" eyebrow="Translation" title="Translation Settings" description="Configure speech segmentation, language detection, translation timeouts, and synthesized speech defaults." />} />
+          <Route path="/admin/ai-models" element={<SettingsPage module="ai-settings" eyebrow="AI" title="AI Models" description="Whisper speech-to-text model/device/compute settings, Piper defaults, and the active translation provider." />} />
+          <Route path="/admin/translation-modes" element={<RegistryPage module="translation-modes" eyebrow="Translation" title="Translation Modes" description="Context presets (Business, Medical, Legal, ...) that steer how translation is worded for a given meeting." canDelete={true} />} />
+          <Route path="/admin/glossary" element={<GlossaryPage />} />
+          <Route path="/admin/meeting-policy" element={<SettingsPage module="meeting-policy" eyebrow="Meetings" title="Meeting Policy" description="Default limits and toggles applied to every new meeting -- participant caps, waiting room, recording, translation, and captions defaults." />} />
+          <Route path="/admin/organizations" element={<OrganizationsPage />} />
+          <Route path="/admin/infrastructure" element={<InfrastructurePage />} />
           <Route path="/admin/feedback" element={<FeedbackPage />} />
           <Route path="/admin/announcements" element={<RegistryPage module="announcements" eyebrow="Communication" title="Announcements" description="Prepare and manage platform notices for users." />} />
           <Route path="/admin/roles" element={<RolesPage />} />
