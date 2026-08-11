@@ -1,4 +1,4 @@
-import { CheckCircle2, ChevronDown, ChevronUp, Eye, EyeOff, FileText, Plus, RefreshCw, RotateCcw, Save, Search, X } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronUp, Eye, EyeOff, FileText, History, Plus, RefreshCw, RotateCcw, Save, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import AdminPageHeader from "../components/AdminPageHeader";
 import SectionEditor from "../components/cms/SectionEditor";
@@ -8,6 +8,7 @@ import {
   addCmsSection,
   createCmsPage,
   getCmsPage,
+  getCmsPageVersions,
   getCmsSectionTypes,
   listCmsPages,
   mintCmsPreviewToken,
@@ -108,6 +109,58 @@ function CreatePageModal({ onClose, onCreated }) {
   );
 }
 
+function VersionHistoryModal({ page, onClose, onRestore }) {
+  const [versions, setVersions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    getCmsPageVersions(page)
+      .then((data) => setVersions(data.items || []))
+      .catch((err) => setError(err.response?.data?.detail || "Could not load version history"))
+      .finally(() => setLoading(false));
+  }, [page]);
+
+  return (
+    <div className="admin-modal-backdrop" onMouseDown={onClose}>
+      <section className="admin-modal admin-modal--wide" onMouseDown={(event) => event.stopPropagation()}>
+        <header>
+          <div><span>{page}</span><h2>Version history</h2></div>
+          <button onClick={onClose}><X /></button>
+        </header>
+        {error && <p style={{ color: "var(--danger)" }}>{error}</p>}
+        {loading ? (
+          <div className="admin-skeleton" />
+        ) : versions.length === 0 ? (
+          <p className="admin-empty-copy">No published versions yet -- publish this page at least once to start building history.</p>
+        ) : (
+          <div className="admin-table-scroll"><table>
+            <thead><tr><th>Version</th><th>Published</th><th>By</th><th /></tr></thead>
+            <tbody>
+              {versions.map((version) => (
+                <tr key={version.version}>
+                  <td><strong>v{version.version}</strong></td>
+                  <td>{version.published_at ? new Date(version.published_at).toLocaleString() : "—"}</td>
+                  <td>{version.published_by || "—"}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="admin-button admin-button--secondary"
+                      onClick={() => onRestore(version)}
+                    >
+                      <RotateCcw size={13} />Restore to draft
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table></div>
+        )}
+      </section>
+    </div>
+  );
+}
+
 export default function CmsPage() {
   const [pages, setPages] = useState([]);
   const [sectionTypes, setSectionTypes] = useState([]);
@@ -123,6 +176,7 @@ export default function CmsPage() {
   const [previewing, setPreviewing] = useState(false);
   const [previewUrl, setPreviewUrl] = useState("");
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   const sectionTypeMap = useMemo(() => Object.fromEntries(sectionTypes.map((t) => [t.key, t])), [sectionTypes]);
 
@@ -274,6 +328,13 @@ export default function CmsPage() {
     }
   };
 
+  const handleRestoreVersion = (version) => {
+    setSections(version.sections || []);
+    setSeo(version.seo || { meta_title: "", meta_description: "", og_image_url: "" });
+    setShowHistory(false);
+    setMessage(`Loaded v${version.version} into the draft editor -- review below, then Save draft and Publish to apply it.`);
+  };
+
   return (
     <>
       <AdminPageHeader
@@ -311,10 +372,15 @@ export default function CmsPage() {
                   <h2>{pageDoc.label}</h2>
                   <p>Version {pageDoc.version} · <StatusPill status={pageDoc.status} /></p>
                 </div>
-                <button className="admin-button admin-button--secondary" onClick={togglePreview} disabled={previewLoading}>
-                  {previewLoading ? <RefreshCw className="animate-spin" size={15} /> : previewing ? <EyeOff size={15} /> : <Eye size={15} />}
-                  {previewing ? "Edit" : "Preview"}
-                </button>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className="admin-button admin-button--secondary" onClick={() => setShowHistory(true)}>
+                    <History size={15} />History
+                  </button>
+                  <button className="admin-button admin-button--secondary" onClick={togglePreview} disabled={previewLoading}>
+                    {previewLoading ? <RefreshCw className="animate-spin" size={15} /> : previewing ? <EyeOff size={15} /> : <Eye size={15} />}
+                    {previewing ? "Edit" : "Preview"}
+                  </button>
+                </div>
               </header>
 
               {previewing ? (
@@ -377,6 +443,14 @@ export default function CmsPage() {
         <CreatePageModal
           onClose={() => setShowCreate(false)}
           onCreated={(page) => { setShowCreate(false); loadPages(page); }}
+        />
+      )}
+
+      {showHistory && pageDoc && (
+        <VersionHistoryModal
+          page={pageDoc.page}
+          onClose={() => setShowHistory(false)}
+          onRestore={handleRestoreVersion}
         />
       )}
     </>

@@ -43,3 +43,4 @@ start_project.bat
 backend/output.wav
 backend/test_persist.wav
 backend/test_stderr.wav
+Caddyfile

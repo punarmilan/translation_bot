@@ -9,11 +9,16 @@ Docker services" per the Phase 2 spec is satisfied as a reference panel,
 not a live control plane, on purpose.
 """
 
+import asyncio
+import time
 from typing import Annotated
 
+import httpx
 from fastapi import APIRouter, Depends
 
 from app.config import get_settings
+from app.database import get_db
+from app.routers.system import probe
 from app.security import require_permission
 
 router = APIRouter(prefix="/api/admin/infrastructure", tags=["admin-infrastructure"])
@@ -24,6 +29,52 @@ _PLACEHOLDER_MARKERS = ("replace-with", "change-this", "use-the-same-long-secret
 def _is_customized(value: str) -> bool:
     lowered = value.lower()
     return bool(value) and not any(marker in lowered for marker in _PLACEHOLDER_MARKERS)
+
+
+async def _mongo_health() -> dict:
+    started = time.perf_counter()
+    try:
+        await get_db().command("ping")
+        return {"name": "MongoDB", "status": "healthy", "latency_ms": round((time.perf_counter() - started) * 1000)}
+    except Exception as exc:
+        return {"name": "MongoDB", "status": "unavailable", "latency_ms": None, "detail": str(exc)}
+
+
+async def _turn_health(settings) -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=3.0, verify=settings.HEALTH_VERIFY_TLS) as client:
+            response = await client.get(f"{settings.PUBLIC_BACKEND_URL.rstrip('/')}/api/internal/turn-status")
+            data = response.json() if response.status_code == 200 else {}
+    except Exception:
+        data = {}
+    if not data.get("configured"):
+        return {"name": "coturn (TURN/STUN)", "status": "not_configured", "detail": "TURN_HOST is not set on the public backend"}
+    status = "healthy" if data.get("reachable") else "unavailable"
+    return {"name": "coturn (TURN/STUN)", "status": status, "detail": f"{data.get('host')}:{data.get('port')}"}
+
+
+@router.get("/health")
+async def infrastructure_health(
+    _: Annotated[dict, Depends(require_permission("system.read"))],
+) -> dict:
+    """Live reachability checks -- everything that can actually be checked
+    without a Docker socket or Caddy admin API (neither of which this
+    service has access to, by design; see the module docstring)."""
+    settings = get_settings()
+    checked = await asyncio.gather(
+        _mongo_health(),
+        _turn_health(settings),
+        probe("LibreTranslate", f"{settings.LIBRETRANSLATE_URL.rstrip('/')}/languages"),
+        probe("Whisper (STT)", f"{settings.PUBLIC_BACKEND_URL.rstrip('/')}/stt/status"),
+        probe("Piper (TTS)", f"{settings.PUBLIC_BACKEND_URL.rstrip('/')}/tts/status"),
+    )
+    return {
+        "checked": checked,
+        "not_inspectable": [
+            {"name": "Docker daemon", "detail": "No Docker socket is mounted into this service; container status can't be queried from here. Use `docker compose ps` on the host."},
+            {"name": "Caddy", "detail": "No Caddy admin API is exposed to this service. If this request reached the admin console at all in production, Caddy successfully routed it."},
+        ],
+    }
 
 
 @router.get("")

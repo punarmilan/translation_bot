@@ -1,5 +1,5 @@
 import {
-  Activity, BarChart3, Bell, BookOpenText, BrainCircuit, Building2, ChevronDown, CircleUserRound, Database,
+  Activity, BarChart3, Bell, BookMarked, BookOpenText, BrainCircuit, Building2, ChevronDown, CircleUserRound, Database,
   FileClock, Files, Folder, Gauge, Languages, LayoutDashboard, Megaphone, Menu, MessageSquareText,
   MicVocal, Network, Palette, Search, Settings, ShieldCheck, SlidersHorizontal, ToggleLeft, Users, Video, X,
 } from "lucide-react";
@@ -12,6 +12,7 @@ const navigation = [
   ["/admin/dashboard", LayoutDashboard, "Dashboard"],
   ["/admin/branding", Palette, "Brand & Theme"],
   ["/admin/cms", Files, "Pages"],
+  ["/admin/blog", BookMarked, "Blog"],
   ["/admin/media-library", Folder, "Media Library"],
   ["/admin/users", Users, "Users"],
   ["/admin/meetings", Video, "Meetings"],

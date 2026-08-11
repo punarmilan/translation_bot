@@ -46,6 +46,31 @@ _CARD_FIELDS_BASIC: list[FieldSchema] = [
     {"key": "image_url", "label": "Image", "type": "image", "default": ""},
 ]
 
+_FEATURE_CARD_FIELDS: list[FieldSchema] = [
+    {"key": "eyebrow", "label": "Eyebrow / Category (flagship cards only)", "type": "text", "default": ""},
+    {"key": "title", "label": "Title", "type": "text", "default": ""},
+    {"key": "description", "label": "Description", "type": "textarea", "default": ""},
+    {"key": "benefits", "label": "Benefits (one per line, flagship cards only)", "type": "textarea", "default": ""},
+    {"key": "why_it_matters", "label": "Why it matters", "type": "textarea", "default": ""},
+    {"key": "use_cases", "label": "Use cases", "type": "textarea", "default": ""},
+    {"key": "icon", "label": "Icon / Emoji", "type": "text", "default": ""},
+    {"key": "image_url", "label": "Image", "type": "image", "default": ""},
+    {"key": "cta_text", "label": "CTA Label (optional)", "type": "text", "default": ""},
+    {"key": "cta_link", "label": "CTA Link (optional)", "type": "url", "default": ""},
+]
+
+_SOLUTION_CARD_FIELDS: list[FieldSchema] = [
+    {"key": "category", "label": "Category / Label", "type": "text", "default": ""},
+    {"key": "title", "label": "Problem statement (heading)", "type": "text", "default": ""},
+    {"key": "pain_points", "label": "Pain points (one per line)", "type": "textarea", "default": ""},
+    {"key": "description", "label": "How VOXO helps", "type": "textarea", "default": ""},
+    {"key": "impact", "label": "Expected impact", "type": "textarea", "default": ""},
+    {"key": "icon", "label": "Icon / Emoji", "type": "text", "default": ""},
+    {"key": "image_url", "label": "Image", "type": "image", "default": ""},
+    {"key": "cta_text", "label": "CTA Label (optional)", "type": "text", "default": ""},
+    {"key": "cta_link", "label": "CTA Link (optional)", "type": "url", "default": ""},
+]
+
 SECTION_TYPE_REGISTRY: dict[str, SectionTypeSchema] = {
     "hero": {
         "key": "hero",
@@ -95,11 +120,20 @@ SECTION_TYPE_REGISTRY: dict[str, SectionTypeSchema] = {
     "feature_grid": {
         "key": "feature_grid",
         "label": "Feature Grid",
-        "description": "Heading plus a grid of feature/benefit cards.",
+        "description": "Heading plus a grid of feature cards (title, description, benefits, why-it-matters, use cases, optional CTA). Used by the public Features page's flagship and capability-catalog sections.",
         "fields": _COMMON_HEADING_FIELDS,
         "supports_cards": True,
         "card_label": "Feature",
-        "card_fields": _CARD_FIELDS_BASIC,
+        "card_fields": _FEATURE_CARD_FIELDS,
+    },
+    "solution_grid": {
+        "key": "solution_grid",
+        "label": "Solution Grid",
+        "description": "Heading plus a grid of industry/use-case solution cards (category, problem, pain points, how VOXO helps, impact, optional CTA). Used by the public Solutions page.",
+        "fields": _COMMON_HEADING_FIELDS,
+        "supports_cards": True,
+        "card_label": "Solution",
+        "card_fields": _SOLUTION_CARD_FIELDS,
     },
     "testimonials": {
         "key": "testimonials",

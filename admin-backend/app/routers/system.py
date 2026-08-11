@@ -79,6 +79,20 @@ async def system_health(_: Annotated[dict, Depends(require_permission("system.re
         {"$match": {"latency_ms": {"$type": "number"}}},
         {"$group": {"_id": None, "average": {"$avg": "$latency_ms"}, "count": {"$sum": 1}}},
     ]).to_list(length=1)
+    stage_latency_rows = await get_db()["translation_logs"].aggregate([
+        {
+            "$group": {
+                "_id": None,
+                "stt_avg": {"$avg": "$stt_latency_ms"},
+                "stt_count": {"$sum": {"$cond": [{"$ne": ["$stt_latency_ms", None]}, 1, 0]}},
+                "translation_avg": {"$avg": "$translation_latency_ms"},
+                "translation_count": {"$sum": {"$cond": [{"$ne": ["$translation_latency_ms", None]}, 1, 0]}},
+                "tts_avg": {"$avg": "$tts_latency_ms"},
+                "tts_count": {"$sum": {"$cond": [{"$ne": ["$tts_latency_ms", None]}, 1, 0]}},
+            }
+        },
+    ]).to_list(length=1)
+    stage_row = stage_latency_rows[0] if stage_latency_rows else {}
 
     return {
         "status": "operational" if mongo["status"] == "healthy" else "degraded",
@@ -102,16 +116,19 @@ async def system_health(_: Annotated[dict, Depends(require_permission("system.re
             "reachable": realtime_stats is not None,
         },
         "latency": {
-            # Only what's actually persisted today: a single round-trip figure
-            # per voice-translation delivery (backend/app/repositories/translation_log_repository.py).
-            # Per-stage STT/MT/TTS breakdown is computed in-memory at
-            # backend/app/websocket_manager.py's voice pipeline but not yet
-            # persisted separately -- see ADMIN_IMPLEMENTATION_PLAN.md.
-            "average_round_trip_ms": round(latency_rows[0]["average"]) if latency_rows else None,
+            # Per-stage figures are averaged from translation_logs' stt_latency_ms /
+            # translation_latency_ms / tts_latency_ms fields, populated at the two
+            # voice-pipeline log sites in backend/app/websocket_manager.py. Each
+            # count is independent since a stage can be missing (e.g. a cached
+            # translation skips MT, a failed synthesis has no tts_latency_ms).
+            "average_round_trip_ms": round(latency_rows[0]["average"]) if latency_rows and latency_rows[0]["average"] is not None else None,
             "sample_count": latency_rows[0]["count"] if latency_rows else 0,
-            "stt_ms": None,
-            "translation_ms": None,
-            "tts_ms": None,
+            "stt_ms": round(stage_row["stt_avg"]) if stage_row.get("stt_avg") is not None else None,
+            "stt_sample_count": stage_row.get("stt_count", 0),
+            "translation_ms": round(stage_row["translation_avg"]) if stage_row.get("translation_avg") is not None else None,
+            "translation_sample_count": stage_row.get("translation_count", 0),
+            "tts_ms": round(stage_row["tts_avg"]) if stage_row.get("tts_avg") is not None else None,
+            "tts_sample_count": stage_row.get("tts_count", 0),
         },
         "checked_at": datetime.now(timezone.utc).isoformat(),
     }

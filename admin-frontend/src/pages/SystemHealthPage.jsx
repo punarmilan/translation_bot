@@ -34,16 +34,21 @@ export default function SystemHealthPage() {
     [Activity, "Active WebSocket connections", realtime.reachable ? (realtime.active_websocket_connections ?? "-") : "unreachable"],
     [Gauge, "Avg. round-trip latency", latency.average_round_trip_ms != null ? `${latency.average_round_trip_ms} ms` : "no data yet"],
   ];
+  const stageLatencyMetrics = [
+    ["Whisper (STT)", latency.stt_ms, latency.stt_sample_count],
+    ["LibreTranslate (MT)", latency.translation_ms, latency.translation_sample_count],
+    ["Piper (TTS)", latency.tts_ms, latency.tts_sample_count],
+  ];
   return <><AdminPageHeader eyebrow="Operations" title="System Health" description="Live dependency probes and host resource utilization for the administration and meeting platform."><button className="admin-button admin-button--secondary" onClick={load}><RefreshCw size={15} />Refresh</button></AdminPageHeader>
     {message && <div className="admin-alert">{message}</div>}
     <section className="admin-metric-grid admin-metric-grid--four">{resources.map(([Icon, label, value]) => <article key={label}><div><span><Icon size={19} /></span><small>{label}</small></div><strong>{value}</strong><p>Current host reading</p></article>)}</section>
     <h3 style={{ margin: "24px 0 10px", fontSize: 13, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--muted)" }}>Realtime meeting platform</h3>
     <section className="admin-metric-grid admin-metric-grid--four">{meetingMetrics.map(([Icon, label, value]) => <article key={label}><div><span><Icon size={19} /></span><small>{label}</small></div><strong>{value}</strong><p>{label === "Avg. round-trip latency" ? `${latency.sample_count ?? 0} samples logged` : "Read from the public backend"}</p></article>)}</section>
-    {latency.stt_ms == null && (
-      <p style={{ fontSize: 12, color: "var(--muted)", margin: "10px 2px 0" }}>
-        Per-stage STT / translation / TTS latency isn't broken out yet -- only the combined round-trip figure is currently persisted. See Infrastructure → known gaps.
-      </p>
-    )}
+    <h3 style={{ margin: "24px 0 10px", fontSize: 13, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--muted)" }}>Per-stage voice pipeline latency</h3>
+    <section className="admin-metric-grid admin-metric-grid--four">{stageLatencyMetrics.map(([label, ms, count]) => <article key={label}><div><span><Gauge size={19} /></span><small>{label}</small></div><strong>{ms != null ? `${ms} ms` : "no data yet"}</strong><p>{count ?? 0} samples logged</p></article>)}</section>
+    <p style={{ fontSize: 12, color: "var(--muted)", margin: "10px 2px 0" }}>
+      Averaged from translation_logs entries recorded since this metric was added -- older meetings only contributed to the combined round-trip figure above.
+    </p>
     {loading ? <div className="admin-skeleton" /> : <section className="admin-table-panel" style={{ marginTop: 20 }}><div className="admin-table-scroll"><table><thead><tr><th>Service</th><th>Status</th><th>Latency</th><th>Detail</th></tr></thead><tbody>{data.services.map((service) => <tr key={service.name}><td><strong>{service.name}</strong></td><td><StatusBadge value={service.status} /></td><td>{service.latency_ms == null ? "-" : `${service.latency_ms} ms`}</td><td>{service.detail || "Connected"}</td></tr>)}</tbody></table></div></section>}
   </>;
 }

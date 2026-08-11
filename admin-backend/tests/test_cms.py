@@ -10,7 +10,7 @@ import jwt
 from app.config import get_settings
 
 
-def create_page(client, page="features", label="Features"):
+def create_page(client, page="sample-page", label="Sample Page"):
     return client.post("/api/admin/cms/pages", json={"page": page, "label": label})
 
 
@@ -25,7 +25,7 @@ def test_create_page_then_list_and_get(client):
     created = create_page(client)
     assert created.status_code == 201
     body = created.json()
-    assert body["page"] == "features"
+    assert body["page"] == "sample-page"
     assert body["version"] == 0
     assert body["published"] is None
 
@@ -35,10 +35,10 @@ def test_create_page_then_list_and_get(client):
     # "landing" is auto-migrated at startup (see app/cms/migrate_landing.py);
     # every other test in this module only cares about the page it creates.
     assert "landing" in pages
-    assert pages["features"]["status"] == "draft"
-    assert pages["features"]["section_count"] == 0
+    assert pages["sample-page"]["status"] == "draft"
+    assert pages["sample-page"]["section_count"] == 0
 
-    fetched = client.get("/api/admin/cms/pages/features")
+    fetched = client.get("/api/admin/cms/pages/sample-page")
     assert fetched.status_code == 200
     assert fetched.json()["status"] == "draft"
 
@@ -56,7 +56,7 @@ def test_get_missing_page_is_404(client):
 
 def test_add_section_uses_registry_defaults(client):
     create_page(client)
-    response = client.post("/api/admin/cms/pages/features/sections", json={"type": "hero", "name": "Top banner"})
+    response = client.post("/api/admin/cms/pages/sample-page/sections", json={"type": "hero", "name": "Top banner"})
     assert response.status_code == 201
     sections = response.json()["draft"]["sections"]
     assert len(sections) == 1
@@ -70,14 +70,14 @@ def test_add_section_uses_registry_defaults(client):
 
 def test_add_section_with_unknown_type_is_rejected(client):
     create_page(client)
-    response = client.post("/api/admin/cms/pages/features/sections", json={"type": "not-a-real-type", "name": "x"})
+    response = client.post("/api/admin/cms/pages/sample-page/sections", json={"type": "not-a-real-type", "name": "x"})
     assert response.status_code == 400
 
 
 def test_save_draft_replaces_sections_and_reports_draft_status(client):
     create_page(client)
     sections = [{"key": "sec_1", "type": "richtext", "name": "Intro", "hidden": False, "eyebrow": "Hi", "title": "T", "body": "B", "cards": []}]
-    response = client.put("/api/admin/cms/pages/features", json={"sections": sections})
+    response = client.put("/api/admin/cms/pages/sample-page", json={"sections": sections})
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "draft"
@@ -88,9 +88,9 @@ def test_save_draft_replaces_sections_and_reports_draft_status(client):
 def test_publish_snapshots_draft_and_increments_version(client):
     create_page(client)
     sections = [{"key": "sec_1", "type": "richtext", "name": "Intro", "hidden": False, "title": "V1", "cards": []}]
-    client.put("/api/admin/cms/pages/features", json={"sections": sections})
+    client.put("/api/admin/cms/pages/sample-page", json={"sections": sections})
 
-    published = client.post("/api/admin/cms/pages/features/publish")
+    published = client.post("/api/admin/cms/pages/sample-page/publish")
     assert published.status_code == 200
     body = published.json()
     assert body["version"] == 1
@@ -100,10 +100,10 @@ def test_publish_snapshots_draft_and_increments_version(client):
 
     # Publishing again with unchanged content bumps the version again --
     # every publish is a durable, numbered snapshot.
-    republished = client.post("/api/admin/cms/pages/features/publish")
+    republished = client.post("/api/admin/cms/pages/sample-page/publish")
     assert republished.json()["version"] == 2
 
-    versions = client.get("/api/admin/cms/pages/features/versions")
+    versions = client.get("/api/admin/cms/pages/sample-page/versions")
     assert versions.status_code == 200
     version_numbers = [v["version"] for v in versions.json()["items"]]
     assert version_numbers == [2, 1]
@@ -112,11 +112,11 @@ def test_publish_snapshots_draft_and_increments_version(client):
 def test_status_is_modified_after_publish_then_further_draft_edits(client):
     create_page(client)
     sections = [{"key": "sec_1", "type": "richtext", "name": "Intro", "hidden": False, "title": "V1", "cards": []}]
-    client.put("/api/admin/cms/pages/features", json={"sections": sections})
-    client.post("/api/admin/cms/pages/features/publish")
+    client.put("/api/admin/cms/pages/sample-page", json={"sections": sections})
+    client.post("/api/admin/cms/pages/sample-page/publish")
 
     changed_sections = [{"key": "sec_1", "type": "richtext", "name": "Intro", "hidden": False, "title": "V2 (unpublished edit)", "cards": []}]
-    response = client.put("/api/admin/cms/pages/features", json={"sections": changed_sections})
+    response = client.put("/api/admin/cms/pages/sample-page", json={"sections": changed_sections})
     assert response.json()["status"] == "modified"
 
     listed = client.get("/api/admin/cms/pages").json()["items"]
@@ -126,12 +126,12 @@ def test_status_is_modified_after_publish_then_further_draft_edits(client):
 def test_revert_discards_unpublished_draft_edits(client):
     create_page(client)
     published_sections = [{"key": "sec_1", "type": "richtext", "name": "Intro", "hidden": False, "title": "Published copy", "cards": []}]
-    client.put("/api/admin/cms/pages/features", json={"sections": published_sections})
-    client.post("/api/admin/cms/pages/features/publish")
+    client.put("/api/admin/cms/pages/sample-page", json={"sections": published_sections})
+    client.post("/api/admin/cms/pages/sample-page/publish")
 
-    client.put("/api/admin/cms/pages/features", json={"sections": [{"key": "sec_1", "type": "richtext", "name": "Intro", "hidden": False, "title": "Unsaved draft edit", "cards": []}]})
+    client.put("/api/admin/cms/pages/sample-page", json={"sections": [{"key": "sec_1", "type": "richtext", "name": "Intro", "hidden": False, "title": "Unsaved draft edit", "cards": []}]})
 
-    reverted = client.post("/api/admin/cms/pages/features/revert")
+    reverted = client.post("/api/admin/cms/pages/sample-page/revert")
     assert reverted.status_code == 200
     body = reverted.json()
     assert body["status"] == "published"
@@ -140,25 +140,25 @@ def test_revert_discards_unpublished_draft_edits(client):
 
 def test_public_endpoint_404s_until_first_publish(client):
     create_page(client)
-    client.put("/api/admin/cms/pages/features", json={"sections": [{"key": "sec_1", "type": "richtext", "name": "Intro", "hidden": False, "title": "Draft only", "cards": []}]})
+    client.put("/api/admin/cms/pages/sample-page", json={"sections": [{"key": "sec_1", "type": "richtext", "name": "Intro", "hidden": False, "title": "Draft only", "cards": []}]})
 
-    public_before = client.get("/api/public/cms/pages/features")
+    public_before = client.get("/api/public/cms/pages/sample-page")
     assert public_before.status_code == 404
 
-    client.post("/api/admin/cms/pages/features/publish")
-    public_after = client.get("/api/public/cms/pages/features")
+    client.post("/api/admin/cms/pages/sample-page/publish")
+    public_after = client.get("/api/public/cms/pages/sample-page")
     assert public_after.status_code == 200
     assert public_after.json()["sections"][0]["title"] == "Draft only"
 
 
 def test_public_endpoint_never_leaks_unpublished_draft_edits(client):
     create_page(client)
-    client.put("/api/admin/cms/pages/features", json={"sections": [{"key": "sec_1", "type": "richtext", "name": "Intro", "hidden": False, "title": "Published title", "cards": []}]})
-    client.post("/api/admin/cms/pages/features/publish")
+    client.put("/api/admin/cms/pages/sample-page", json={"sections": [{"key": "sec_1", "type": "richtext", "name": "Intro", "hidden": False, "title": "Published title", "cards": []}]})
+    client.post("/api/admin/cms/pages/sample-page/publish")
 
-    client.put("/api/admin/cms/pages/features", json={"sections": [{"key": "sec_1", "type": "richtext", "name": "Intro", "hidden": False, "title": "Not yet live", "cards": []}]})
+    client.put("/api/admin/cms/pages/sample-page", json={"sections": [{"key": "sec_1", "type": "richtext", "name": "Intro", "hidden": False, "title": "Not yet live", "cards": []}]})
 
-    public = client.get("/api/public/cms/pages/features")
+    public = client.get("/api/public/cms/pages/sample-page")
     assert public.status_code == 200
     assert public.json()["sections"][0]["title"] == "Published title"
 
@@ -169,21 +169,21 @@ def test_public_endpoint_hides_hidden_sections(client):
         {"key": "sec_visible", "type": "richtext", "name": "Visible", "hidden": False, "title": "Shown", "cards": []},
         {"key": "sec_hidden", "type": "richtext", "name": "Hidden", "hidden": True, "title": "Not shown", "cards": []},
     ]
-    client.put("/api/admin/cms/pages/features", json={"sections": sections})
-    client.post("/api/admin/cms/pages/features/publish")
+    client.put("/api/admin/cms/pages/sample-page", json={"sections": sections})
+    client.post("/api/admin/cms/pages/sample-page/publish")
 
-    public = client.get("/api/public/cms/pages/features")
+    public = client.get("/api/public/cms/pages/sample-page")
     titles = [s["title"] for s in public.json()["sections"]]
     assert titles == ["Shown"]
 
 
 def test_delete_page_removes_it_and_its_versions(client):
     create_page(client)
-    client.post("/api/admin/cms/pages/features/publish")
-    deleted = client.delete("/api/admin/cms/pages/features")
+    client.post("/api/admin/cms/pages/sample-page/publish")
+    deleted = client.delete("/api/admin/cms/pages/sample-page")
     assert deleted.status_code == 200
-    assert client.get("/api/admin/cms/pages/features").status_code == 404
-    assert client.get("/api/admin/cms/pages/features/versions").json()["items"] == []
+    assert client.get("/api/admin/cms/pages/sample-page").status_code == 404
+    assert client.get("/api/admin/cms/pages/sample-page/versions").json()["items"] == []
 
 
 def test_missing_permission_is_rejected(client):
@@ -203,14 +203,14 @@ def test_missing_permission_is_rejected(client):
 
 def test_preview_token_mint_is_scoped_to_the_page_and_short_lived(client):
     create_page(client)
-    response = client.post("/api/admin/cms/pages/features/preview-token")
+    response = client.post("/api/admin/cms/pages/sample-page/preview-token")
     assert response.status_code == 200
     body = response.json()
     assert body["expires_in"] > 0
 
     settings = get_settings()
     claims = jwt.decode(body["token"], settings.CMS_PREVIEW_SECRET, algorithms=["HS256"])
-    assert claims["page"] == "features"
+    assert claims["page"] == "sample-page"
     assert claims["purpose"] == "cms_preview"
     assert claims["exp"] - claims["iat"] == body["expires_in"]
 

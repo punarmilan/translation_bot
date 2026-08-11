@@ -1,11 +1,35 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getPublicContent } from "../services/api";
+import { getCmsPage, getPublicContent, resolveImageUrl } from "../services/api";
 import {
   BriefcaseBusiness, Building2, GraduationCap, HandHeart, Headset, HeartPulse,
-  Landmark, Microscope, Plane, Presentation, Scale, Users,
+  Landmark, Microscope, Plane, Presentation, Scale, Sparkles, Users,
 } from "lucide-react";
 import { CTASection, MarketingPage, PageHeader, SectionTitle } from "../components/marketing/MarketingPage";
+
+// Maps the icon-name strings authored in the admin CMS back to real icon
+// components -- see FeaturesPage.jsx for the identical pattern.
+const ICON_MAP = {
+  BriefcaseBusiness, Building2, GraduationCap, HandHeart, Headset, HeartPulse,
+  Landmark, Microscope, Plane, Presentation, Scale, Users,
+};
+const resolveIcon = (name) => ICON_MAP[name] || Sparkles;
+
+function splitLines(value) {
+  return (value || "").split("\n").map((line) => line.trim()).filter(Boolean);
+}
+
+function cardToSolution(card) {
+  return [
+    resolveIcon(card.icon),
+    card.category || "",
+    card.title || "",
+    splitLines(card.pain_points),
+    card.description || "",
+    card.impact || "",
+    card.image_url ? resolveImageUrl(card.image_url) : null,
+  ];
+}
 
 const solutions = [
   [GraduationCap, "Education", "Students struggle when lectures use an unfamiliar language.", ["Lower participation", "Missed context", "Limited international access"], "Deliver translated lectures, captions, and classroom chat in each student's language.", "More inclusive classes and stronger participation.", "/images/online-classroom.png"],
@@ -34,6 +58,7 @@ function SolutionVisual({ Icon, image, title }) {
 
 export default function SolutionsPage() {
   const [content, setContent] = useState(null);
+  const [cmsSections, setCmsSections] = useState(null);
 
   useEffect(() => {
     getPublicContent()
@@ -44,8 +69,22 @@ export default function SolutionsPage() {
       .catch((err) => console.warn("Failed to load solutions page content", err));
   }, []);
 
+  useEffect(() => {
+    getCmsPage("solutions")
+      .then((res) => setCmsSections(res.sections || []))
+      .catch((err) => console.warn("Failed to load solutions CMS content, using built-in defaults", err));
+  }, []);
+
   const title = content?.title || "Language access for the conversations that matter";
   const body = content?.body || "VOXO adapts one meeting experience to classrooms, consultations, global teams, public services, and live events.";
+
+  const solutionsSection = cmsSections?.find((s) => s.key === "sec_solutions");
+  const solutionItems = solutionsSection?.cards?.length ? solutionsSection.cards.map(cardToSolution) : solutions;
+  const solutionsHeading = {
+    eyebrow: solutionsSection?.eyebrow || "Real-world impact",
+    title: solutionsSection?.title || "Start with the communication problem, not the technology",
+    description: solutionsSection?.body || "Each solution keeps the original speaker present while making the conversation accessible to more people.",
+  };
 
   return (
     <MarketingPage>
@@ -55,10 +94,10 @@ export default function SolutionsPage() {
       </PageHeader>
       <section className="marketing-section">
         <div className="landing-shell">
-          <SectionTitle eyebrow="Real-world impact" title="Start with the communication problem, not the technology" description="Each solution keeps the original speaker present while making the conversation accessible to more people." />
+          <SectionTitle {...solutionsHeading} />
           <div className="solution-list">
-            {solutions.map(([Icon, title, problem, pains, solution, impact, image], index) => (
-              <article className={`solution-section ${index % 2 ? "is-reverse" : ""}`} key={title}>
+            {solutionItems.map(([Icon, title, problem, pains, solution, impact, image], index) => (
+              <article className={`solution-section ${index % 2 ? "is-reverse" : ""}`} key={`${title}-${problem}`}>
                 <div className="solution-section__copy">
                   <p className="section-eyebrow"><Icon size={16} />{title}</p>
                   <h2>{problem}</h2>

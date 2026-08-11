@@ -77,6 +77,18 @@ class RuntimeSettingsManager:
             "jwt_expiration_minutes": 60,
             "stun_server": "stun:stun.l.google.com:19302",
         }
+        self.meeting_policy: dict = {
+            "max_participants": 12,
+            "waiting_room_enabled": False,
+            "screen_sharing_enabled": True,
+            "recording_enabled_default": True,
+            "translation_enabled_default": True,
+            "captions_enabled_default": True,
+            "meeting_timeout_minutes": 240,
+            "idle_participant_timeout_minutes": 30,
+            "allow_guest_join": True,
+            "require_host_to_start": False,
+        }
         self.landing_sections: list = []
         self.enabled_languages: set[str] = {"ar", "de", "en", "es", "fr", "hi", "it", "nl", "pt", "ru"}
 
@@ -102,6 +114,10 @@ class RuntimeSettingsManager:
             if brand_doc and "values" in brand_doc:
                 self.branding_settings.update(brand_doc["values"])
 
+            policy_doc = await db["platform_settings"].find_one({"key": "meeting_policy"})
+            if policy_doc and "values" in policy_doc:
+                self.meeting_policy.update(policy_doc["values"])
+
             sections = await db["landing_sections"].find({}).sort("order", 1).to_list(length=100)
             if sections:
                 self.landing_sections = sections
@@ -126,6 +142,9 @@ class RuntimeSettingsManager:
         elif category == "general":
             self.general_settings.update(values)
             logger.info(f"Updated general settings: {values}")
+        elif category == "meeting_policy":
+            self.meeting_policy.update(values)
+            logger.info(f"Updated meeting policy: {values}")
 
     def update_language(self, code: str, enabled: bool) -> None:
         if enabled:

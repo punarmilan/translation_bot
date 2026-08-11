@@ -4,6 +4,7 @@ import AdminLayout from "./components/AdminLayout";
 import ProtectedAdminRoute from "./components/ProtectedAdminRoute";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import AuditLogsPage from "./pages/AuditLogsPage";
+import BlogPage from "./pages/BlogPage";
 import CmsPage from "./pages/CmsPage";
 import ContentPage from "./pages/ContentPage";
 import DashboardPage from "./pages/DashboardPage";
@@ -71,6 +72,7 @@ function AdminAppRoutes() {
           <Route path="/admin/branding" element={<BrandPage />} />
           <Route path="/admin/cms" element={<CmsPage />} />
           <Route path="/admin/page-builder" element={<Navigate to="/admin/cms" replace />} />
+          <Route path="/admin/blog" element={<BlogPage />} />
           <Route path="/admin/media-library" element={<MediaLibraryPage />} />
           <Route path="/admin/users" element={<UsersPage />} />
           <Route path="/admin/meetings" element={<MeetingsPage />} />

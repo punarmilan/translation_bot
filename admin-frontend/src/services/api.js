@@ -218,4 +218,42 @@ export async function mintCmsPreviewToken(page) {
   return (await api.post(`/api/admin/cms/pages/${encodeURIComponent(page)}/preview-token`)).data;
 }
 
+// Blog CMS -- posts are individual documents (not sections), reusing the
+// same rich-text sanitizer and draft/publish vocabulary as the generic CMS.
+export async function listBlogPosts(params) {
+  return (await api.get("/api/admin/blog/posts", { params })).data;
+}
+
+export async function getBlogPost(postId) {
+  return (await api.get(`/api/admin/blog/posts/${postId}`)).data;
+}
+
+export async function createBlogPost(body) {
+  return (await api.post("/api/admin/blog/posts", body)).data;
+}
+
+export async function updateBlogPost(postId, body) {
+  return (await api.patch(`/api/admin/blog/posts/${postId}`, body)).data;
+}
+
+export async function deleteBlogPost(postId) {
+  return (await api.delete(`/api/admin/blog/posts/${postId}`)).data;
+}
+
+export async function publishBlogPost(postId) {
+  return (await api.post(`/api/admin/blog/posts/${postId}/publish`)).data;
+}
+
+export async function unpublishBlogPost(postId) {
+  return (await api.post(`/api/admin/blog/posts/${postId}/unpublish`)).data;
+}
+
+export async function getBlogCategories() {
+  return (await api.get("/api/admin/blog/categories")).data;
+}
+
+export async function getBlogTags() {
+  return (await api.get("/api/admin/blog/tags")).data;
+}
+
 export default api;

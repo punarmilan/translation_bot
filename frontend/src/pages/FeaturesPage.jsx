@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getPublicContent } from "../services/api";
+import { getCmsPage, getPublicContent } from "../services/api";
 import {
   Activity, AudioLines, BarChart3, Captions, ChartNoAxesCombined, CircleGauge,
   Languages, Link2, LockKeyhole, MessageCircle, Mic, MonitorSmartphone,
@@ -8,6 +8,38 @@ import {
   Users, Video, Volume2, Waves, Waypoints,
 } from "lucide-react";
 import { CTASection, MarketingPage, PageHeader, ProductMockup, SectionTitle } from "../components/marketing/MarketingPage";
+
+// Maps the icon-name strings authored in the admin CMS (see admin-backend's
+// migrate_features_solutions.py seed data) back to real icon components --
+// any name the admin enters that isn't in this map falls back to Sparkles
+// rather than silently rendering nothing.
+const ICON_MAP = {
+  Activity, AudioLines, BarChart3, Captions, ChartNoAxesCombined, CircleGauge,
+  Languages, Link2, LockKeyhole, MessageCircle, Mic, MonitorSmartphone,
+  Radio, RefreshCw, ScreenShare, ShieldCheck, Sparkles, SquareUserRound,
+  Users, Video, Volume2, Waves, Waypoints,
+};
+const resolveIcon = (name) => ICON_MAP[name] || Sparkles;
+
+function splitLines(value) {
+  return (value || "").split("\n").map((line) => line.trim()).filter(Boolean);
+}
+
+function cardToFlagship(card) {
+  return {
+    icon: resolveIcon(card.icon),
+    eyebrow: card.eyebrow || "",
+    title: card.title || "",
+    description: card.description || "",
+    benefits: splitLines(card.benefits),
+    why: card.why_it_matters || "",
+    use: card.use_cases || "",
+  };
+}
+
+function cardToCapability(card) {
+  return [resolveIcon(card.icon), card.title || "", card.description || "", card.why_it_matters || "", card.use_cases || ""];
+}
 
 const flagship = [
   {
@@ -91,6 +123,7 @@ function CapabilityCard({ item, index }) {
 
 export default function FeaturesPage() {
   const [content, setContent] = useState(null);
+  const [cmsSections, setCmsSections] = useState(null);
 
   useEffect(() => {
     getPublicContent()
@@ -101,8 +134,29 @@ export default function FeaturesPage() {
       .catch((err) => console.warn("Failed to load features page content", err));
   }, []);
 
+  useEffect(() => {
+    getCmsPage("features")
+      .then((res) => setCmsSections(res.sections || []))
+      .catch((err) => console.warn("Failed to load features CMS content, using built-in defaults", err));
+  }, []);
+
   const title = content?.title || "Meet, speak, and collaborate across languages";
   const body = content?.body || "A complete meeting experience where video, speech, captions, chat, roles, and diagnostics work together.";
+
+  const flagshipSection = cmsSections?.find((s) => s.key === "sec_flagship");
+  const capabilitySection = cmsSections?.find((s) => s.key === "sec_capabilities");
+  const flagshipItems = flagshipSection?.cards?.length ? flagshipSection.cards.map(cardToFlagship) : flagship;
+  const capabilityItems = capabilitySection?.cards?.length ? capabilitySection.cards.map(cardToCapability) : capabilities;
+  const flagshipHeading = {
+    eyebrow: flagshipSection?.eyebrow || "Flagship experiences",
+    title: flagshipSection?.title || "Translation stays inside the conversation",
+    description: flagshipSection?.body || "The product is designed around how people actually meet, not around a collection of disconnected AI tools.",
+  };
+  const capabilityHeading = {
+    eyebrow: capabilitySection?.eyebrow || "Complete capability catalog",
+    title: capabilitySection?.title || "The supporting system behind every meeting",
+    description: capabilitySection?.body || "Current, coming-soon, and future capabilities are labelled clearly.",
+  };
 
   return (
     <MarketingPage>
@@ -113,9 +167,9 @@ export default function FeaturesPage() {
 
       <section className="marketing-section">
         <div className="landing-shell">
-          <SectionTitle eyebrow="Flagship experiences" title="Translation stays inside the conversation" description="The product is designed around how people actually meet, not around a collection of disconnected AI tools." />
+          <SectionTitle {...flagshipHeading} />
           <div className="flagship-list">
-            {flagship.map((feature, index) => (
+            {flagshipItems.map((feature, index) => (
               <article className={`flagship-feature ${index % 2 ? "is-reverse" : ""}`} key={feature.title}>
                 <div className="flagship-feature__copy">
                   <p className="section-eyebrow"><feature.icon size={16} />{feature.eyebrow}</p>
@@ -136,8 +190,8 @@ export default function FeaturesPage() {
 
       <section className="marketing-section soft-section soft-section--blue">
         <div className="landing-shell">
-          <SectionTitle eyebrow="Complete capability catalog" title="The supporting system behind every meeting" description="Current, coming-soon, and future capabilities are labelled clearly." />
-          <div className="capability-grid">{capabilities.map((item, idx) => <CapabilityCard key={item[1]} item={item} index={idx} />)}</div>
+          <SectionTitle {...capabilityHeading} />
+          <div className="capability-grid">{capabilityItems.map((item, idx) => <CapabilityCard key={item[1]} item={item} index={idx} />)}</div>
         </div>
       </section>
       <CTASection />

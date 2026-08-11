@@ -194,6 +194,16 @@ async def get_page_versions(page: str, _: Annotated[dict, Depends(require_permis
     return {"items": [serialize(v) for v in versions]}
 
 
+def _visible_section(section: dict) -> dict:
+    cards = section.get("cards")
+    if not isinstance(cards, list):
+        return section
+    visible_cards = [card for card in cards if not (isinstance(card, dict) and card.get("hidden"))]
+    if visible_cards == cards:
+        return section
+    return {**section, "cards": visible_cards}
+
+
 @public_router.get("/pages/{page}")
 async def get_published_page(page: str) -> dict:
     doc = await CmsRepository(get_db()).get_page(page)
@@ -203,6 +213,6 @@ async def get_published_page(page: str) -> dict:
     return {
         "page": page,
         "version": published.get("version", doc.get("version", 1)),
-        "sections": [s for s in published.get("sections", []) if not s.get("hidden")],
+        "sections": [_visible_section(s) for s in published.get("sections", []) if not s.get("hidden")],
         "seo": published.get("seo", {}),
     }

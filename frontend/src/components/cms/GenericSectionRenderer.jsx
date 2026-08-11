@@ -102,7 +102,7 @@ function CtaButtons({ section }) {
 }
 
 function GenericSection({ section }) {
-  const cards = section.cards || [];
+  const cards = (section.cards || []).filter((card) => !card?.hidden);
   switch (section.type) {
     case "hero":
       return (

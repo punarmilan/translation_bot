@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import contextlib
 import hashlib
 import hmac
 import json
@@ -37,7 +38,7 @@ from app.schemas import (
 from app.stt.service import stt_service
 from app.tts.service import tts_service
 from app.translation.service import SUPPORTED_LANGUAGES, normalize_language
-from app.websocket_manager import RoomConnectionManager
+from app.websocket_manager import MeetingPolicyRejected, RoomConnectionManager
 
 
 router = APIRouter()
@@ -207,18 +208,22 @@ async def websocket_room_chat(
             await websocket.close(code=1008, reason="Room ID mismatch")
             return
 
-        await manager.connect(
-            websocket=websocket,
-            room_id=room_id,
-            user_id=user_id,
-            username=authenticated_username,
-            name=current_user.get("name") or authenticated_username,
-            preferred_language=authenticated_language,
-            role=join_payload.role if join_payload.role in {"host", "participant"} else authenticated_role,
-            pronouns=current_user.get("pronouns"),
-            voice_preference=current_user.get("voice_preference", "auto"),
-            translation_mode=translation_mode,
-        )
+        try:
+            await manager.connect(
+                websocket=websocket,
+                room_id=room_id,
+                user_id=user_id,
+                username=authenticated_username,
+                name=current_user.get("name") or authenticated_username,
+                preferred_language=authenticated_language,
+                role=join_payload.role if join_payload.role in {"host", "participant"} else authenticated_role,
+                pronouns=current_user.get("pronouns"),
+                voice_preference=current_user.get("voice_preference", "auto"),
+                translation_mode=translation_mode,
+            )
+        except MeetingPolicyRejected as exc:
+            await websocket.close(code=4001, reason=exc.reason)
+            return
         registered = True
 
 
@@ -661,6 +666,27 @@ async def internal_realtime_stats() -> dict:
     }
 
 
+@router.get("/api/internal/turn-status")
+async def internal_turn_status() -> dict:
+    """Read-only TCP reachability check for the configured TURN relay
+    (coturn), for the admin console's Infrastructure page. Only opens and
+    immediately closes a plain TCP connection to TURN_HOST:TURN_PORT --
+    does not touch WebRTC signaling, ICE negotiation, or media relay.
+    """
+    settings = get_settings()
+    host, port = settings.TURN_HOST, settings.TURN_PORT
+    if not host:
+        return {"configured": False, "reachable": None, "host": host, "port": port}
+    try:
+        _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=2.0)
+        writer.close()
+        with contextlib.suppress(Exception):
+            await writer.wait_closed()
+        return {"configured": True, "reachable": True, "host": host, "port": port}
+    except Exception:
+        return {"configured": True, "reachable": False, "host": host, "port": port}
+
+
 @router.post("/api/internal/reload-config")
 async def internal_reload_config(payload: dict | None = None) -> dict:
     payload = payload or {}
@@ -773,6 +799,16 @@ async def public_content() -> dict:
     return {"items": [{"key": item["key"], "content": item.get("content", {}), "version": item.get("version", 1)} for item in items]}
 
 
+def _visible_section(section: dict) -> dict:
+    cards = section.get("cards")
+    if not isinstance(cards, list):
+        return section
+    visible_cards = [card for card in cards if not (isinstance(card, dict) and card.get("hidden"))]
+    if visible_cards == cards:
+        return section
+    return {**section, "cards": visible_cards}
+
+
 @router.get("/api/public/cms/pages/{page}")
 async def public_cms_page(page: str) -> dict:
     """Reads the generic CMS page collection directly, mirroring how
@@ -787,7 +823,7 @@ async def public_cms_page(page: str) -> dict:
     return {
         "page": page,
         "version": published.get("version", doc.get("version", 1)),
-        "sections": [s for s in published.get("sections", []) if not s.get("hidden")],
+        "sections": [_visible_section(s) for s in published.get("sections", []) if not s.get("hidden")],
         "seo": published.get("seo", {}),
     }
 
@@ -815,7 +851,7 @@ async def public_cms_page_preview(page: str, token: str) -> dict:
     return {
         "page": page,
         "preview": True,
-        "sections": [s for s in draft.get("sections", []) if not s.get("hidden")],
+        "sections": [_visible_section(s) for s in draft.get("sections", []) if not s.get("hidden")],
         "seo": draft.get("seo", {}),
     }
 

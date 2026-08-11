@@ -69,6 +69,19 @@ def ip_to_country(ip: str, preferred_language: str) -> str:
 
 logger = logging.getLogger(__name__)
 
+
+class MeetingPolicyRejected(Exception):
+    """Raised when an admin-configured meeting policy (see PlatformRepository's
+    ``platform_settings/meeting_policy`` document) blocks a join attempt --
+    e.g. the meeting is at capacity, guests are disabled, or no host has
+    joined yet. Callers (see routes.py's websocket endpoint) close the
+    socket with this reason instead of admitting the session."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 OUTBOUND_QUEUE_MAX_SIZE = 100
 DELIVERY_TIMEOUT_SECONDS = 5.0
 VOICE_TRANSCRIPTION_TIMEOUT_SECONDS = 90.0
@@ -145,6 +158,17 @@ class RoomState:
     pending_host_session_id: str | None = None
     host_grace_deadline: float | None = None
     host_grace_task: asyncio.Task[None] | None = None
+    # Meeting policy (see PlatformRepository's platform_settings/meeting_policy
+    # document), snapshotted onto the room at creation time so a mid-meeting
+    # policy edit doesn't retroactively change an already-running meeting.
+    max_participants: int | None = None
+    waiting_room_enabled: bool = False
+    screen_sharing_enabled: bool = True
+    recording_enabled: bool = True
+    captions_enabled: bool = True
+    require_host_to_start: bool = False
+    idle_timeout_minutes: int | None = None
+    meeting_timeout_task: asyncio.Task[None] | None = None
 
 
 
@@ -170,6 +194,24 @@ class RoomConnectionManager:
         voice_preference: str = "auto",
         translation_mode: str = "General",
     ) -> str:
+        from app.runtime_settings import runtime_settings
+        policy = runtime_settings.meeting_policy
+        async with self._lock:
+            existing_room = self.rooms.get(room_id)
+            is_returning_host_precheck = bool(
+                user_id and existing_room and existing_room.pending_host_user_id == user_id
+            )
+            room_has_sessions = bool(existing_room and existing_room.sessions)
+            if room_has_sessions and not is_returning_host_precheck:
+                if not user_id and not policy.get("allow_guest_join", True):
+                    raise MeetingPolicyRejected("Guest access is disabled for this meeting.")
+                max_participants = existing_room.max_participants
+                if max_participants and len(existing_room.sessions) >= max_participants:
+                    raise MeetingPolicyRejected("This meeting has reached its participant limit.")
+                needs_host = existing_room.require_host_to_start or existing_room.waiting_room_enabled
+                if needs_host and not any(s.role == "host" for s in existing_room.sessions.values()):
+                    raise MeetingPolicyRejected("Waiting for the host to join this meeting.")
+
         session = ClientSession(
             session_id=str(uuid4()),
             websocket=websocket,
@@ -225,7 +267,22 @@ class RoomConnectionManager:
                 logger.error(f"Error setting user presence online: {e}")
 
         async with self._lock:
-            room = self.rooms.setdefault(room_id, RoomState(room_id=room_id, translation_mode=translation_mode))
+            room = self.rooms.get(room_id)
+            room_is_new = room is None
+            if room_is_new:
+                room = RoomState(
+                    room_id=room_id,
+                    translation_mode=translation_mode,
+                    max_participants=policy.get("max_participants"),
+                    waiting_room_enabled=policy.get("waiting_room_enabled", False),
+                    screen_sharing_enabled=policy.get("screen_sharing_enabled", True),
+                    recording_enabled=policy.get("recording_enabled_default", True),
+                    captions_enabled=policy.get("captions_enabled_default", True),
+                    translation_enabled=policy.get("translation_enabled_default", True),
+                    require_host_to_start=policy.get("require_host_to_start", False),
+                    idle_timeout_minutes=policy.get("idle_participant_timeout_minutes") or None,
+                )
+                self.rooms[room_id] = room
             # Keep translation_mode up-to-date
             if translation_mode and translation_mode != "General":
                 room.translation_mode = translation_mode
@@ -247,6 +304,11 @@ class RoomConnectionManager:
                 session.role = "host"
                 room.meeting_host_session_id = session.session_id
                 asyncio.create_task(self._periodic_summary_loop(room_id))
+                meeting_timeout_minutes = policy.get("meeting_timeout_minutes")
+                if meeting_timeout_minutes:
+                    room.meeting_timeout_task = asyncio.create_task(
+                        self._expire_meeting_timeout(room_id, meeting_timeout_minutes)
+                    )
                 from app.integrations.webhooks import webhook_manager
                 asyncio.create_task(webhook_manager.dispatch_event("meeting.started", {"room_id": room_id}))
             else:
@@ -273,6 +335,10 @@ class RoomConnectionManager:
                 "chat_enabled": room.chat_enabled,
                 "translation_enabled": room.translation_enabled,
                 "translation_mode": room.translation_mode,
+                "max_participants": room.max_participants,
+                "screen_sharing_enabled": room.screen_sharing_enabled,
+                "recording_enabled": room.recording_enabled,
+                "captions_enabled": room.captions_enabled,
             }
             other_sessions = (
                 [s for s in room.sessions.values() if s.session_id != session.session_id]
@@ -537,12 +603,63 @@ class RoomConnectionManager:
             )
             await self.broadcast_presence(room_id)
 
+    async def _expire_meeting_timeout(self, room_id: str, timeout_minutes: int) -> None:
+        """Ends a meeting once it has run past the admin-configured
+        meeting_timeout_minutes policy (see PlatformRepository's
+        platform_settings/meeting_policy document)."""
+        await asyncio.sleep(timeout_minutes * 60)
+        remaining_sessions: list[ClientSession] = []
+        async with self._lock:
+            room = self.rooms.get(room_id)
+            if not room or not room.meeting_active:
+                return
+            room.meeting_active = False
+            room.meeting_host_session_id = None
+            for remaining_session in room.sessions.values():
+                remaining_session.in_meeting = False
+            remaining_sessions = list(room.sessions.values())
+
+        if remaining_sessions:
+            meeting_ended = OutgoingSignalingMessage.create(
+                message_type="call_ended",
+                room_id=room_id,
+                sender_session_id="platform_policy",
+                sender_name="System",
+                payload={"reason": "meeting_timeout"},
+            ).model_dump_json()
+            for remaining_session in remaining_sessions:
+                self._enqueue(remaining_session, meeting_ended, event="call_ended")
+            await self.broadcast_system(
+                room_id,
+                "This meeting reached its scheduled time limit and was ended automatically.",
+            )
+            await self.broadcast_presence(room_id)
+
     async def mark_heartbeat(self, websocket: WebSocket) -> None:
         session_id = self.sessions_by_socket.get(websocket)
         session = self.sessions.get(session_id) if session_id else None
         if not session:
             return
         session.last_seen_at = utc_timestamp()
+
+    async def _sweep_idle_sessions(self, room_id: str) -> None:
+        """Disconnects sessions that have not sent a heartbeat within the
+        room's idle_participant_timeout_minutes policy."""
+        idle_sessions: list[ClientSession] = []
+        async with self._lock:
+            room = self.rooms.get(room_id)
+            if not room or not room.idle_timeout_minutes:
+                return
+            cutoff = time.time() - room.idle_timeout_minutes * 60
+            for candidate in room.sessions.values():
+                try:
+                    last_seen = datetime.fromisoformat(candidate.last_seen_at).timestamp()
+                except (ValueError, TypeError):
+                    continue
+                if last_seen < cutoff:
+                    idle_sessions.append(candidate)
+        for idle_session in idle_sessions:
+            await self.disconnect(idle_session.websocket, room_id, reason="idle_timeout")
 
     async def _periodic_summary_loop(self, room_id: str) -> None:
         from app.intelligence.service import meeting_intelligence_engine
@@ -552,6 +669,7 @@ class RoomConnectionManager:
                 room = self.rooms.get(room_id)
                 if not room or not room.sessions:
                     break
+            await self._sweep_idle_sessions(room_id)
             try:
                 await meeting_intelligence_engine.generate_summary(room_id)
                 broadcast_payload = json.dumps({
@@ -971,6 +1089,8 @@ class RoomConnectionManager:
                 return
             session_id = self.sessions_by_socket.get(websocket)
             session = self.sessions.get(session_id) if session_id else None
+            if active and not room.screen_sharing_enabled:
+                return
             if session and session.role not in {"host", "admin", "co-host"}:
                 permissions = getattr(room, "host_permissions", {})
                 if not permissions.get("allow_share", True) and active:
@@ -1063,7 +1183,9 @@ class RoomConnectionManager:
             session = self.sessions.get(session_id) if session_id else None
             if not session or session.role not in {"host", "admin", "co-host"}:
                 return
-            
+            if status == "recording" and not room.recording_enabled:
+                return
+
             prev_status = room.recording_status.get("status", "stopped")
             room.recording_status = {
                 "status": status,
@@ -1787,6 +1909,9 @@ class RoomConnectionManager:
                     cache_hit=False,
                     voice_model=None,
                     translation_success=False,
+                    stt_latency_ms=stt_latency_ms,
+                    translation_latency_ms=translation_latency_ms,
+                    tts_latency_ms=None,
                 )
                 await room_repo.update_translation_stats(
                     room_id=room_id,
@@ -1866,6 +1991,9 @@ class RoomConnectionManager:
                 cache_hit=False,
                 voice_model=getattr(audio, "selected_model", None),
                 translation_success=True,
+                stt_latency_ms=stt_latency_ms,
+                translation_latency_ms=translation_latency_ms,
+                tts_latency_ms=audio.tts_latency_ms,
             )
             await room_repo.update_translation_stats(
                 room_id=room_id,
@@ -2172,6 +2300,10 @@ class RoomConnectionManager:
                         "chat_enabled": room.chat_enabled,
                         "translation_enabled": room.translation_enabled,
                         "translation_mode": room.translation_mode,
+                        "max_participants": room.max_participants,
+                        "screen_sharing_enabled": room.screen_sharing_enabled,
+                        "recording_enabled": room.recording_enabled,
+                        "captions_enabled": room.captions_enabled,
                         "timestamp": utc_timestamp(),
                     })
                     for session in room.sessions.values():

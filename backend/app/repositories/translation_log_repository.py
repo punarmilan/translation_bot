@@ -23,6 +23,9 @@ class TranslationLogRepository:
         cache_hit: bool,
         voice_model: str | None,
         translation_success: bool,
+        stt_latency_ms: int | None = None,
+        translation_latency_ms: int | None = None,
+        tts_latency_ms: int | None = None,
     ) -> None:
         await self.collection.insert_one({
             "room_id": room_id,
@@ -32,6 +35,9 @@ class TranslationLogRepository:
             "transcript": transcript,
             "translated_text": translated_text,
             "latency_ms": latency_ms,
+            "stt_latency_ms": stt_latency_ms,
+            "translation_latency_ms": translation_latency_ms,
+            "tts_latency_ms": tts_latency_ms,
             "cache_hit": cache_hit,
             "voice_model": voice_model,
             "translation_success": translation_success,

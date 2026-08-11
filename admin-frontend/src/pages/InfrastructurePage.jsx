@@ -1,6 +1,7 @@
 import { CheckCircle2, RefreshCw, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import AdminPageHeader from "../components/AdminPageHeader";
+import StatusBadge from "../components/StatusBadge";
 import { fetchAdmin } from "../services/api";
 
 function SecretChip({ configured }) {
@@ -17,8 +18,10 @@ function SecretChip({ configured }) {
 
 export default function InfrastructurePage() {
   const [data, setData] = useState(null);
+  const [health, setHealth] = useState(null);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
+  const [healthLoading, setHealthLoading] = useState(true);
 
   const load = () => {
     setLoading(true);
@@ -26,6 +29,11 @@ export default function InfrastructurePage() {
       .then((payload) => { setData(payload); setMessage(""); })
       .catch((error) => setMessage(error.response?.data?.detail || "Could not load infrastructure reference"))
       .finally(() => setLoading(false));
+    setHealthLoading(true);
+    fetchAdmin("/infrastructure/health")
+      .then((payload) => setHealth(payload))
+      .catch(() => setHealth(null))
+      .finally(() => setHealthLoading(false));
   };
   useEffect(() => { load(); }, []);
 
@@ -40,6 +48,31 @@ export default function InfrastructurePage() {
       </AdminPageHeader>
 
       {message && <div className="admin-alert">{message}</div>}
+
+      <section className="admin-settings-panel" style={{ marginBottom: 20 }}>
+        <header><span>Live reachability checks</span><h2>Dependency health</h2></header>
+        {healthLoading || !health ? <div className="admin-skeleton" /> : (
+          <div className="admin-table-scroll"><table>
+            <thead><tr><th>Dependency</th><th>Status</th><th>Detail</th></tr></thead>
+            <tbody>
+              {health.checked.map((svc) => (
+                <tr key={svc.name}>
+                  <td><strong>{svc.name}</strong></td>
+                  <td><StatusBadge value={svc.status} /></td>
+                  <td className="admin-table-description">{svc.latency_ms != null ? `${svc.latency_ms} ms · ` : ""}{svc.detail || "—"}</td>
+                </tr>
+              ))}
+              {health.not_inspectable.map((svc) => (
+                <tr key={svc.name}>
+                  <td><strong>{svc.name}</strong></td>
+                  <td><StatusBadge value="not inspectable" /></td>
+                  <td className="admin-table-description">{svc.detail}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table></div>
+        )}
+      </section>
 
       {loading || !data ? <div className="admin-skeleton" /> : (
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>

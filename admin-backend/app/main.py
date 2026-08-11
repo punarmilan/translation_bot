@@ -8,16 +8,18 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
 from app.config import get_settings
+from app.cms.migrate_features_solutions import migrate_features_and_solutions
 from app.cms.migrate_landing import migrate_landing_page
 from app.database import connect_db, disconnect_db, get_db
 from app.repositories.audit_repository import AuditRepository
+from app.repositories.blog_repository import BlogRepository
 from app.repositories.cms_repository import CmsRepository
 from app.repositories.media_repository import MediaRepository
 from app.repositories.invitation_repository import AdminInvitationRepository
 from app.repositories.platform_repository import PlatformRepository
 from app.repositories.session_repository import AdminSessionRepository
 from app.repositories.user_repository import AdminUserRepository
-from app.routers import auth, cms, dashboard, infrastructure, media, meetings, platform, system, users, enterprise
+from app.routers import auth, blog, cms, dashboard, infrastructure, media, meetings, platform, system, users, enterprise
 
 
 
@@ -31,7 +33,9 @@ async def lifespan(_: FastAPI):
     await PlatformRepository(get_db()).create_indexes()
     await MediaRepository(get_db()).create_indexes()
     await CmsRepository(get_db()).create_indexes()
+    await BlogRepository(get_db()).create_indexes()
     await migrate_landing_page(get_db())
+    await migrate_features_and_solutions(get_db())
     yield
     await disconnect_db()
 
@@ -87,6 +91,8 @@ app.include_router(platform.router)
 app.include_router(platform.public_router)
 app.include_router(cms.router)
 app.include_router(cms.public_router)
+app.include_router(blog.router)
+app.include_router(blog.public_router)
 app.include_router(media.router)
 app.include_router(system.router)
 app.include_router(enterprise.router)

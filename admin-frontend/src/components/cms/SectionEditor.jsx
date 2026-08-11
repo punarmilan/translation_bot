@@ -32,6 +32,14 @@ export default function SectionEditor({ section, sectionType, index, total, onCh
     onChange({ ...section, cards: [...cards, blank] });
   };
   const deleteCard = (cardIdx) => onChange({ ...section, cards: cards.filter((_, i) => i !== cardIdx) });
+  const toggleCardHidden = (cardIdx) => setCard(cardIdx, "hidden", !cards[cardIdx]?.hidden);
+  const moveCard = (cardIdx, direction) => {
+    const target = cardIdx + direction;
+    if (target < 0 || target >= cards.length) return;
+    const next = [...cards];
+    [next[cardIdx], next[target]] = [next[target], next[cardIdx]];
+    onChange({ ...section, cards: next });
+  };
 
   return (
     <section className="cms-section-card" data-hidden={section.hidden ? "true" : "false"}>
@@ -80,12 +88,21 @@ export default function SectionEditor({ section, sectionType, index, total, onCh
           </div>
           <div className="cms-card-list">
             {cards.map((card, cardIdx) => (
-              <div className="cms-card-item" key={cardIdx}>
+              <div className="cms-card-item" key={cardIdx} data-hidden={card?.hidden ? "true" : "false"}>
                 <div className="cms-card-item__header">
-                  <span style={{ fontSize: 11, fontWeight: 800, color: "var(--primary)" }}>#{cardIdx + 1}</span>
-                  <button type="button" onClick={() => deleteCard(cardIdx)} style={{ border: "none", background: "transparent", color: "var(--danger)", cursor: "pointer" }}>
-                    <Trash2 size={14} />
-                  </button>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: "var(--primary)" }}>
+                    #{cardIdx + 1}{card?.hidden && <span className="cms-page-status cms-page-status--draft" style={{ marginLeft: 6 }}>Hidden</span>}
+                  </span>
+                  <span style={{ display: "flex", gap: 4 }}>
+                    <button type="button" className="admin-button admin-button--secondary" disabled={cardIdx === 0} onClick={() => moveCard(cardIdx, -1)} title="Move up" style={{ padding: "3px 6px" }}><ArrowUp size={12} /></button>
+                    <button type="button" className="admin-button admin-button--secondary" disabled={cardIdx === cards.length - 1} onClick={() => moveCard(cardIdx, 1)} title="Move down" style={{ padding: "3px 6px" }}><ArrowDown size={12} /></button>
+                    <button type="button" className="admin-button admin-button--secondary" onClick={() => toggleCardHidden(cardIdx)} title={card?.hidden ? "Unhide" : "Hide"} style={{ padding: "3px 6px" }}>
+                      {card?.hidden ? <EyeOff size={12} /> : <Eye size={12} />}
+                    </button>
+                    <button type="button" onClick={() => deleteCard(cardIdx)} style={{ border: "none", background: "transparent", color: "var(--danger)", cursor: "pointer" }}>
+                      <Trash2 size={14} />
+                    </button>
+                  </span>
                 </div>
                 {(sectionType.card_fields || []).map((field) => (
                   <DynamicField key={field.key} field={field} value={card[field.key]} onChange={(value) => setCard(cardIdx, field.key, value)} />
