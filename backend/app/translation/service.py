@@ -260,17 +260,43 @@ class TranslationService:
         cache_key = target_lang.lower().strip()
         cached = self._glossary_cache.get(cache_key)
         cached_time = self._glossary_cache_time.get(cache_key)
-        
+
         if cached is not None and cached_time and (now - cached_time).total_seconds() < 60:
             return cached
-            
+
         from app.repositories.glossary_repository import GlossaryRepository
         repo = GlossaryRepository(db)
         entries = await repo.get_active_glossary_for_lang(target_lang)
         entries.sort(key=lambda x: len(x.get("source_term", "")), reverse=True)
-        
+
         self._glossary_cache[cache_key] = entries
         self._glossary_cache_time[cache_key] = now
+        return entries
+
+    async def _load_mode_terminology(self, db, mode: str) -> list[dict]:
+        """Preferred-terminology substitutions configured on an admin translation
+        mode (see admin-backend's /admin/translation-modes), applied the same
+        way as the general glossary so an admin's per-mode word choices actually
+        reach the LibreTranslate output rather than being stored and ignored."""
+        now = datetime.utcnow()
+        cache_key = mode.lower().strip()
+        cached = self._glossary_cache.get(f"mode:{cache_key}")
+        cached_time = self._glossary_cache_time.get(f"mode:{cache_key}")
+
+        if cached is not None and cached_time and (now - cached_time).total_seconds() < 60:
+            return cached
+
+        doc = await db["translation_modes"].find_one({"name": {"$regex": f"^{re.escape(mode)}$", "$options": "i"}, "enabled": {"$ne": False}})
+        terminology = doc.get("preferred_terminology") if doc else None
+        entries = [
+            {"source_term": src, "target_term": tgt}
+            for src, tgt in (terminology or {}).items()
+            if src and tgt
+        ]
+        entries.sort(key=lambda x: len(x["source_term"]), reverse=True)
+
+        self._glossary_cache[f"mode:{cache_key}"] = entries
+        self._glossary_cache_time[f"mode:{cache_key}"] = now
         return entries
 
 
@@ -389,21 +415,21 @@ class TranslationService:
             log_translation_event("translation.failure", result=result)
             return result
 
-        # Enforce glossary replacements
+        # Enforce translation-mode preferred terminology, then the general glossary
         from app.database import get_db
         try:
             db = get_db()
+            mode_entries = await self._load_mode_terminology(db, mode) if mode and mode != "General" else []
             glossary_entries = await self._load_glossary(db, target)
-            if glossary_entries:
-                for entry in glossary_entries:
-                    src_term = entry.get("source_term", "")
-                    tgt_term = entry.get("target_term", "")
-                    case_sensitive = entry.get("case_sensitive", False)
-                    flags = 0 if case_sensitive else re.IGNORECASE
-                    pattern = re.compile(rf"\b{re.escape(src_term)}\b", flags)
-                    translated_text = pattern.sub(tgt_term, translated_text)
+            for entry in [*mode_entries, *glossary_entries]:
+                src_term = entry.get("source_term", "")
+                tgt_term = entry.get("target_term", "")
+                case_sensitive = entry.get("case_sensitive", False)
+                flags = 0 if case_sensitive else re.IGNORECASE
+                pattern = re.compile(rf"\b{re.escape(src_term)}\b", flags)
+                translated_text = pattern.sub(tgt_term, translated_text)
         except Exception as e:
-            logger.warning(f"Error applying glossary to translation: {e}")
+            logger.warning(f"Error applying glossary/terminology to translation: {e}")
 
         self.cache.set(api_source, target, text, mode, translated_text)
         result = TranslationResult(

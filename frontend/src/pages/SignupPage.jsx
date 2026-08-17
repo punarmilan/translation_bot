@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { useConfig } from "../contexts/ConfigContext";
 import { parseApiError, getPublicLanguages } from "../services/api";
 
 const LANGUAGE_OPTIONS = [
@@ -33,6 +34,7 @@ const VOICE_OPTIONS = [
 
 export default function SignupPage() {
   const { signup } = useAuth();
+  const { branding } = useConfig();
   const navigate = useNavigate();
   const location = useLocation();
   const [form, setForm] = useState({
@@ -96,8 +98,9 @@ export default function SignupPage() {
     <div className="min-h-screen bg-brand-dark flex items-center justify-center px-4 py-10">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <Link to="/" className="text-lg font-semibold text-brand-bg">
-            VOXO
+          <Link to="/" className="inline-flex items-center gap-2 text-lg font-semibold text-brand-bg">
+            {branding.logo_url && <img src={branding.logo_url} alt={branding.product_name || "VOXO"} className="h-7 w-auto" />}
+            {branding.product_name || "VOXO"}
           </Link>
           <p className="text-brand-bg/50 mt-2 text-sm">Create your account</p>
         </div>

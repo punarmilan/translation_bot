@@ -28,12 +28,18 @@ def test_meeting_policy_round_trips_and_has_sane_defaults(client):
     assert body["key"] == "meeting_policy"
     assert body["values"]["max_participants"] == 12
     assert body["values"]["waiting_room_enabled"] is False
+    # Phase 8: file-sharing limits are part of the same meeting_policy document
+    # rather than a duplicate settings surface, defaulting to the values that
+    # were previously hardcoded in backend/app/routes.py's upload route.
+    assert body["values"]["max_file_size_mb"] == 25
+    assert ".pdf" in body["values"]["allowed_file_extensions"]
 
-    new_values = {**body["values"], "max_participants": 50, "waiting_room_enabled": True}
+    new_values = {**body["values"], "max_participants": 50, "waiting_room_enabled": True, "max_file_size_mb": 10}
     updated = client.patch("/api/admin/meeting-policy", json={"values": new_values})
     assert updated.status_code == 200
     assert updated.json()["values"]["max_participants"] == 50
     assert updated.json()["values"]["waiting_room_enabled"] is True
+    assert updated.json()["values"]["max_file_size_mb"] == 10
 
 
 def test_meeting_policy_public_mirror_only_exposes_safe_keys(client):
@@ -48,6 +54,8 @@ def test_meeting_policy_public_mirror_only_exposes_safe_keys(client):
         "idle_participant_timeout_minutes": 15,
         "allow_guest_join": False,
         "require_host_to_start": True,
+        "max_file_size_mb": 15,
+        "allowed_file_extensions": [".pdf", ".png"],
         "internal_note": "should never be exposed publicly",
     }})
 
@@ -56,6 +64,8 @@ def test_meeting_policy_public_mirror_only_exposes_safe_keys(client):
     values = public.json()["values"]
     assert values["max_participants"] == 25
     assert values["waiting_room_enabled"] is True
+    assert values["max_file_size_mb"] == 15
+    assert values["allowed_file_extensions"] == [".pdf", ".png"]
     assert "internal_note" not in values
 
 

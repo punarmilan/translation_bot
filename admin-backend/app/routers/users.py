@@ -23,6 +23,10 @@ class UserUpdate(BaseModel):
     is_disabled: bool | None = None
     admin_role: str | None = None
     admin_permissions: list[str] | None = None
+    # Organization membership (see enterprise.py's list_org_users, which
+    # queries this same field) -- reuses the existing user-update endpoint
+    # instead of a separate membership-mutation route.
+    org_id: str | None = None
 
 
 class UserCreate(BaseModel):
@@ -46,6 +50,7 @@ def serialize(user: dict) -> dict:
         "voice_preference": user.get("voice_preference", "auto"),
         "admin_role": user.get("admin_role"),
         "admin_permissions": user.get("admin_permissions", []),
+        "org_id": user.get("org_id"),
         "meetings_joined": user.get("meetings_joined", 0),
         "status": "disabled" if user.get("is_disabled") else "online" if user.get("is_online") else "offline",
         "created_at": user.get("created_at").isoformat() if isinstance(user.get("created_at"), datetime) else user.get("created_at"),

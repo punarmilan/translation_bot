@@ -86,14 +86,16 @@ body {
   margin: 0;
   color: var(--color-text-primary);
   background: var(--color-bg-primary);
-  font-family:
+  font-family: var(
+    --font-family,
     Inter,
     ui-sans-serif,
     system-ui,
     -apple-system,
     BlinkMacSystemFont,
     "Segoe UI",
-    sans-serif;
+    sans-serif
+  );
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-size: var(--font-size-body);
@@ -724,6 +726,55 @@ button:disabled {
   height: 2px;
   margin: 4px auto;
   background: var(--color-text-primary);
+}
+
+.landing-nav__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.landing-nav__dropdown-panel {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 60;
+  display: none;
+  min-width: 180px;
+  margin-top: 8px;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.landing-nav__item.has-dropdown:hover .landing-nav__dropdown-panel,
+.landing-nav__item.has-dropdown:focus-within .landing-nav__dropdown-panel {
+  display: flex;
+}
+
+.landing-nav__dropdown-panel a {
+  padding: 4px 6px;
+  border-radius: 6px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.landing-nav__dropdown-panel a:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-secondary);
+}
+
+.landing-nav__logo-image {
+  height: 28px;
+  width: auto;
+  border-radius: 6px;
 }
 
 .button {
@@ -2183,6 +2234,66 @@ button:disabled {
   font-size: 10px;
 }
 
+.landing-footer__logo-image {
+  height: 26px;
+  width: auto;
+  border-radius: 6px;
+}
+
+.landing-footer__group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.landing-footer__group-title {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.landing-footer__contact {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 12px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+}
+
+.landing-footer__contact a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.landing-footer__contact a:hover {
+  color: var(--color-text-primary);
+}
+
+.landing-footer__social {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.landing-footer__social a {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: var(--color-text-secondary);
+}
+
+.landing-footer__social a:hover {
+  color: var(--color-text-primary);
+  border-color: color-mix(in srgb, var(--color-border), var(--color-text-primary) 20%);
+}
+
 /* Multi-page marketing website */
 .marketing-main {
   min-height: 70vh;
@@ -3092,6 +3203,18 @@ button:disabled {
     flex-wrap: wrap;
     border-top: 1px solid var(--color-border);
     padding-top: 12px;
+  }
+
+  /* Touch devices can't rely on :hover, so nested links are always shown
+     inline under their parent inside the stacked mobile menu instead. */
+  .landing-nav__item.has-dropdown .landing-nav__dropdown-panel {
+    position: static;
+    display: flex;
+    margin: 2px 0 4px 16px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    box-shadow: none;
   }
 }
 

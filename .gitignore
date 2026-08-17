@@ -44,3 +44,6 @@ backend/output.wav
 backend/test_persist.wav
 backend/test_stderr.wav
 Caddyfile
+
+output.wav
+uploads/phase8-verify-room/

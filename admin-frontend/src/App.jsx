@@ -84,7 +84,19 @@ function AdminAppRoutes() {
           <Route path="/admin/languages" element={<LanguagesPage />} />
           <Route path="/admin/voices" element={<VoicesPage />} />
           <Route path="/admin/translation" element={<SettingsPage module="translation-settings" eyebrow="Translation" title="Translation Settings" description="Configure speech segmentation, language detection, translation timeouts, and synthesized speech defaults." />} />
-          <Route path="/admin/ai-models" element={<SettingsPage module="ai-settings" eyebrow="AI" title="AI Models" description="Whisper speech-to-text model/device/compute settings, Piper defaults, and the active translation provider." />} />
+          <Route path="/admin/ai-models" element={<SettingsPage
+            module="ai-settings"
+            eyebrow="AI"
+            title="AI Models"
+            description="Whisper speech-to-text model/device/compute settings, Piper defaults, and the active translation provider."
+            statusEndpoint="/ai-settings/status"
+            readOnlyKeys={["whisper_device", "whisper_compute_type"]}
+            sections={[
+              { title: "Speech-to-Text (Whisper)", keys: ["stt_provider", "whisper_model", "whisper_beam_size", "whisper_device", "whisper_compute_type"] },
+              { title: "Text-to-Speech (Piper)", keys: ["tts_provider", "piper_default_voice", "piper_timeout_seconds", "voice_auto_download"] },
+              { title: "Translation Provider", keys: ["translation_provider", "translation_provider_url"] },
+            ]}
+          />} />
           <Route path="/admin/translation-modes" element={<RegistryPage module="translation-modes" eyebrow="Translation" title="Translation Modes" description="Context presets (Business, Medical, Legal, ...) that steer how translation is worded for a given meeting." canDelete={true} />} />
           <Route path="/admin/glossary" element={<GlossaryPage />} />
           <Route path="/admin/meeting-policy" element={<SettingsPage module="meeting-policy" eyebrow="Meetings" title="Meeting Policy" description="Default limits and toggles applied to every new meeting -- participant caps, waiting room, recording, translation, and captions defaults." />} />

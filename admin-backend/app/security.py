@@ -19,6 +19,7 @@ ALL_ADMIN_PERMISSIONS = {
     "voices.read", "voices.write", "translation.read", "translation.write",
     "feedback.read", "feedback.write", "announcements.read", "announcements.write",
     "roles.read", "roles.write", "audit.read", "system.read", "settings.read", "settings.write",
+    "enterprise.read", "enterprise.write",
 }
 
 
@@ -103,6 +104,7 @@ async def require_admin(
 
 
 def public_admin(user: dict) -> dict:
+    stored_permissions = user.get("admin_permissions")
     return {
         "user_id": str(user["_id"]),
         "name": user.get("name") or user.get("username", ""),
@@ -111,13 +113,25 @@ def public_admin(user: dict) -> dict:
         "role": "admin",
         "preferred_language": user.get("preferred_language", "en"),
         "admin_role": user.get("admin_role", "administrator"),
-        "permissions": user.get("admin_permissions") or sorted(ALL_ADMIN_PERMISSIONS),
+        # A missing field (legacy accounts, or accounts created before roles
+        # existed) means "full access" for backward compatibility; an
+        # explicitly empty list means the admin genuinely has zero
+        # permissions. `stored_permissions or sorted(ALL...)` would treat
+        # both the same way -- see require_permission() below for why that's
+        # a real bug, not just a style nit.
+        "permissions": sorted(stored_permissions) if stored_permissions is not None else sorted(ALL_ADMIN_PERMISSIONS),
     }
 
 
 def require_permission(permission: str):
     async def dependency(admin: Annotated[dict, Depends(require_admin)]) -> dict:
-        permissions = set(admin.get("admin_permissions") or ALL_ADMIN_PERMISSIONS)
+        stored_permissions = admin.get("admin_permissions")
+        # `stored_permissions or ALL_ADMIN_PERMISSIONS` looks equivalent but
+        # isn't: Python's `or` treats an empty list as falsy, so a role that
+        # was deliberately assigned zero permissions (admin_permissions: [])
+        # would silently fall back to every permission instead of none. Only
+        # a genuinely absent field (None) should fall back.
+        permissions = set(stored_permissions) if stored_permissions is not None else set(ALL_ADMIN_PERMISSIONS)
         if permission not in permissions:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Missing permission: {permission}")
         return admin

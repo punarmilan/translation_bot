@@ -1,11 +1,120 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getPublicContent } from "../services/api";
+import { getCmsPage, getPublicContent } from "../services/api";
 import { MarketingPage, PageHeader } from "../components/marketing/MarketingPage";
+
+// Maps CMS plan cards (see admin-backend's migrate_pricing.py seed data) onto
+// the shape this page renders -- same pattern as FeaturesPage.jsx/SolutionsPage.jsx.
+function splitLines(value) {
+  return (value || "").split("\n").map((line) => line.trim()).filter(Boolean);
+}
+
+function cardToPlan(card) {
+  return {
+    title: card.title || "",
+    description: card.description || "",
+    currencySymbol: card.currency_symbol || "",
+    priceAmount: card.price_amount || "",
+    yearlyPriceAmount: card.yearly_price_amount || card.price_amount || "",
+    pricePeriod: card.price_period || "",
+    features: splitLines(card.features),
+    badgeText: card.badge_text || "",
+    highlighted: !!card.highlighted,
+    ctaText: card.cta_text || "",
+    ctaLink: card.cta_link || "",
+  };
+}
+
+const plans = [
+  {
+    title: "Starter",
+    description: "Perfect for individuals, students, and small team chats.",
+    currencySymbol: "$", priceAmount: "0", yearlyPriceAmount: "0", pricePeriod: "/mo",
+    features: [
+      "English & Hindi support",
+      "Live Text Translation",
+      "Live Chat Translation",
+      "Basic Captions",
+      "Limited participants (up to 4)",
+      "40-minute meeting duration limit",
+      "24-hour meeting history",
+    ],
+    badgeText: "", highlighted: false, ctaText: "Choose Starter", ctaLink: "/signup",
+  },
+  {
+    title: "Professional",
+    description: "Optimized for remote professionals, remote teams, and teachers.",
+    currencySymbol: "$", priceAmount: "19", yearlyPriceAmount: "15", pricePeriod: "/mo",
+    features: [
+      "All dynamic languages (10+)",
+      "Voice Translation playback",
+      "Screen Sharing",
+      "Collaborative Whiteboard",
+      "Shared Meeting Notes",
+      "Local Meeting Recording",
+      "AI Meeting Summaries",
+      "Host Moderation Controls",
+      "Up to 50 participants limit",
+      "30-day meeting history",
+    ],
+    badgeText: "Most Popular", highlighted: true, ctaText: "Upgrade with Razorpay", ctaLink: "",
+  },
+  {
+    title: "Enterprise",
+    description: "Dedicated infrastructure and custom workflows for NGOs and corporate teams.",
+    currencySymbol: "", priceAmount: "Custom", yearlyPriceAmount: "Custom", pricePeriod: "",
+    features: [
+      "Unlimited languages",
+      "Unlimited participants & meetings",
+      "Organizations, users & roles",
+      "Multi-tenant Admin Dashboard",
+      "Secure Webhooks and API access",
+      "Dedicated Support and SLAs",
+      "On-Premise / Self-Hosting Options",
+      "Custom Branding settings",
+    ],
+    badgeText: "", highlighted: false, ctaText: "Contact Sales", ctaLink: "mailto:sales@giftme.watch",
+  },
+];
+
+function PlanCTA({ text, link, primary }) {
+  if (!text) return null;
+  const cls = `button ${primary ? "button--primary" : "button--secondary"} w-full text-center`;
+  if (!link) {
+    return <button className={`button ${primary ? "button--primary" : "button--secondary"} w-full`}>{text}</button>;
+  }
+  if (link.startsWith("mailto:") || link.startsWith("http")) {
+    return <a href={link} className={cls}>{text}</a>;
+  }
+  return <Link to={link} className={cls}>{text}</Link>;
+}
+
+function PlanCard({ plan, billingCycle }) {
+  const amount = billingCycle === "yearly" && plan.yearlyPriceAmount ? plan.yearlyPriceAmount : plan.priceAmount;
+  return (
+    <div className={`pricing-card ${plan.highlighted ? "pricing-card--featured" : ""}`}>
+      {plan.highlighted && plan.badgeText && <div className="pricing-card__badge">{plan.badgeText}</div>}
+      <h3 className="pricing-card__title">{plan.title}</h3>
+      <div className="pricing-card__price">
+        {plan.currencySymbol && <span className="price-symbol">{plan.currencySymbol}</span>}
+        <span className="price-amount">{amount}</span>
+        {plan.pricePeriod && <span className="price-period">{plan.pricePeriod}</span>}
+      </div>
+      <p className="pricing-card__desc">{plan.description}</p>
+      <ul className="pricing-card__features">
+        {plan.features.map((feature) => <li key={feature}>✓ {feature}</li>)}
+      </ul>
+      <div className="pricing-card__action">
+        <PlanCTA text={plan.ctaText} link={plan.ctaLink} primary={plan.highlighted} />
+      </div>
+    </div>
+  );
+}
 
 export default function PricingPage() {
   const [content, setContent] = useState(null);
   const [billingCycle, setBillingCycle] = useState("monthly");
+  const [cmsSections, setCmsSections] = useState(null);
 
   useEffect(() => {
     getPublicContent()
@@ -16,15 +125,24 @@ export default function PricingPage() {
       .catch((err) => console.warn("Failed to load pricing page content", err));
   }, []);
 
+  useEffect(() => {
+    getCmsPage("pricing")
+      .then((res) => setCmsSections(res.sections || []))
+      .catch((err) => console.warn("Failed to load pricing CMS content, using built-in defaults", err));
+  }, []);
+
+  const plansSection = cmsSections?.find((s) => s.key === "sec_plans");
+  const planItems = plansSection?.cards?.length ? plansSection.cards.map(cardToPlan) : plans;
+
   return (
     <MarketingPage>
       <PageHeader eyebrow="Pricing plans" title="Choose the plan that fits you best" description="Explore Starter, Professional, and Enterprise plans with transparent price points.">
         <Link className="button button--primary button--large" to="/signup">Get started now</Link>
       </PageHeader>
-      
+
       <section className="marketing-section pricing-page-section">
         <div className="landing-shell">
-          
+
           {/* Billing Cycle Selector Toggle */}
           <div className="billing-toggle-container">
             <button
@@ -43,83 +161,7 @@ export default function PricingPage() {
           </div>
 
           <div className="pricing-grid">
-            {/* Plan 1: Starter */}
-            <div className="pricing-card">
-              <h3 className="pricing-card__title">Starter</h3>
-              <div className="pricing-card__price">
-                <span className="price-symbol">$</span>
-                <span className="price-amount">0</span>
-                <span className="price-period">/mo</span>
-              </div>
-              <p className="pricing-card__desc">Perfect for individuals, students, and small team chats.</p>
-              <ul className="pricing-card__features">
-                <li>✓ English & Hindi support</li>
-                <li>✓ Live Text Translation</li>
-                <li>✓ Live Chat Translation</li>
-                <li>✓ Basic Captions</li>
-                <li>✓ Limited participants (up to 4)</li>
-                <li>✓ 40-minute meeting duration limit</li>
-                <li>✓ 24-hour meeting history</li>
-              </ul>
-              <div className="pricing-card__action">
-                <Link to="/signup" className="button button--secondary w-full text-center">
-                  Choose Starter
-                </Link>
-              </div>
-            </div>
-
-            {/* Plan 2: Professional */}
-            <div className="pricing-card pricing-card--featured">
-              <div className="pricing-card__badge">Most Popular</div>
-              <h3 className="pricing-card__title">Professional</h3>
-              <div className="pricing-card__price">
-                <span className="price-symbol">$</span>
-                <span className="price-amount">{billingCycle === "monthly" ? "19" : "15"}</span>
-                <span className="price-period">/mo</span>
-              </div>
-              <p className="pricing-card__desc">Optimized for remote professionals, remote teams, and teachers.</p>
-              <ul className="pricing-card__features">
-                <li>✓ All dynamic languages (10+)</li>
-                <li>✓ Voice Translation playback</li>
-                <li>✓ Screen Sharing</li>
-                <li>✓ Collaborative Whiteboard</li>
-                <li>✓ Shared Meeting Notes</li>
-                <li>✓ Local Meeting Recording</li>
-                <li>✓ AI Meeting Summaries</li>
-                <li>✓ Host Moderation Controls</li>
-                <li>✓ Up to 50 participants limit</li>
-                <li>✓ 30-day meeting history</li>
-              </ul>
-              <div className="pricing-card__action">
-                <button className="button button--primary w-full">
-                  Upgrade with Razorpay
-                </button>
-              </div>
-            </div>
-
-            {/* Plan 3: Enterprise */}
-            <div className="pricing-card">
-              <h3 className="pricing-card__title">Enterprise</h3>
-              <div className="pricing-card__price">
-                <span className="price-amount">Custom</span>
-              </div>
-              <p className="pricing-card__desc">Dedicated infrastructure and custom workflows for NGOs and corporate teams.</p>
-              <ul className="pricing-card__features">
-                <li>✓ Unlimited languages</li>
-                <li>✓ Unlimited participants & meetings</li>
-                <li>✓ Organizations, users & roles</li>
-                <li>✓ Multi-tenant Admin Dashboard</li>
-                <li>✓ Secure Webhooks and API access</li>
-                <li>✓ Dedicated Support and SLAs</li>
-                <li>✓ On-Premise / Self-Hosting Options</li>
-                <li>✓ Custom Branding settings</li>
-              </ul>
-              <div className="pricing-card__action">
-                <a href="mailto:sales@giftme.watch" className="button button--secondary w-full text-center">
-                  Contact Sales
-                </a>
-              </div>
-            </div>
+            {planItems.map((plan) => <PlanCard key={plan.title} plan={plan} billingCycle={billingCycle} />)}
           </div>
 
           {/* Plan Comparison Matrix Table */}

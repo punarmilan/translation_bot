@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import AdminPageHeader from "../components/AdminPageHeader";
 import EmptyState from "../components/EmptyState";
 import StatusBadge from "../components/StatusBadge";
-import { createUser, exportUsers, getUserActivity, getUsers, updateUser, userAction } from "../services/api";
+import { createUser, exportUsers, getModule, getUserActivity, getUsers, updateUser, userAction } from "../services/api";
 
 const blankUser = {
   name: "",
@@ -25,6 +25,13 @@ export default function UsersPage() {
   const [editing, setEditing] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
+  const [roles, setRoles] = useState([]);
+
+  useEffect(() => {
+    // Custom roles created on the Roles page must be assignable here too --
+    // a hardcoded option list would silently make them unusable.
+    getModule("roles").then((data) => setRoles(data.items || [])).catch(() => {});
+  }, []);
 
   const load = () => {
     setLoading(true);
@@ -215,9 +222,10 @@ export default function UsersPage() {
             {selected.role === "admin" && (
               <label>Admin role
                 <select disabled={!editing} value={selected.admin_role || "administrator"} onChange={(e) => setSelected({ ...selected, admin_role: e.target.value })}>
-                  <option value="administrator">Administrator</option>
-                  <option value="support">Support</option>
-                  <option value="content_editor">Content editor</option>
+                  {roles.length === 0 && <option value="administrator">Administrator</option>}
+                  {roles.map((role) => (
+                    <option key={role.key} value={role.key}>{role.name}</option>
+                  ))}
                 </select>
               </label>
             )}

@@ -32,14 +32,30 @@ LANGUAGE_DEFAULTS = [
     ]
 ]
 
+# Kept in sync with backend/app/runtime_settings.py's feature_flags dict --
+# every key the runtime actually holds should have an admin-editable default
+# here too (previously only 7 of the runtime's ~20 keys did, so most flags
+# were invisible/unreachable from the Admin Console despite existing).
+# captions/recording/screen_sharing/waiting_room live in Meeting Policy
+# instead (see /api/admin/meeting-policy) -- not duplicated here.
 FEATURE_FLAG_DEFAULTS = [
-    {"key": "video_calling", "name": "Video Calling", "description": "Enable WebRTC video meetings", "enabled": True},
-    {"key": "voice_translation", "name": "Voice Translation", "description": "Enable real-time translated speech", "enabled": True},
-    {"key": "live_captions", "name": "Live Captions", "description": "Show live transcripts and translated captions", "enabled": True},
-    {"key": "recording", "name": "Recording", "description": "Allow meeting recording controls", "enabled": False},
-    {"key": "screen_sharing", "name": "Screen Sharing", "description": "Allow browser screen sharing", "enabled": False},
-    {"key": "meeting_summary", "name": "Meeting Summary", "description": "Generate post-meeting summaries", "enabled": False},
-    {"key": "experimental_features", "name": "Experimental Features", "description": "Expose preview functionality", "enabled": False},
+    {"key": "video_calling", "name": "Video Calling", "description": "Enable WebRTC video meetings. Gates the video-call controls in the meeting UI.", "enabled": True},
+    {"key": "voice_translation", "name": "Voice Translation", "description": "Enable real-time translated speech. Gates the listener-mode translation UI and stops live transcription when disabled.", "enabled": True},
+    {"key": "whiteboard", "name": "Whiteboard", "description": "Show the shared whiteboard tab in the meeting workspace.", "enabled": True},
+    {"key": "files", "name": "File Sharing", "description": "Show the file-sharing tab in the meeting workspace. Size/extension limits are configured separately in Meeting Policy.", "enabled": True},
+    {"key": "meeting_notes", "name": "Meeting Notes", "description": "Show the shared notes tab in the meeting workspace.", "enabled": True},
+    {"key": "diagnostics", "name": "Diagnostics Panel", "description": "Show the connection/latency diagnostics tab in the meeting workspace.", "enabled": True},
+    {"key": "meeting_summary", "name": "Meeting Summary", "description": "Reserved -- no post-meeting summary feature is implemented yet; toggling this has no effect.", "enabled": False},
+    {"key": "ai_summary", "name": "AI Summary", "description": "Reserved -- no AI summary feature is implemented yet; toggling this has no effect.", "enabled": False},
+    {"key": "stt", "name": "Speech-to-Text", "description": "Reserved -- STT is currently coupled to Voice Translation with no independent gate; toggling this has no effect.", "enabled": True},
+    {"key": "tts", "name": "Text-to-Speech", "description": "Reserved -- TTS is currently coupled to Voice Translation with no independent gate; toggling this has no effect.", "enabled": True},
+    {"key": "blogs", "name": "Blog", "description": "Reserved -- the public Blog page is not currently gated by this flag; toggling this has no effect.", "enabled": True},
+    {"key": "payments", "name": "Payments", "description": "Reserved -- no payments feature exists in this app; toggling this has no effect.", "enabled": False},
+    {"key": "invitations", "name": "Invitations", "description": "Reserved -- no distinct invitations feature is gated by this flag; toggling this has no effect.", "enabled": True},
+    {"key": "moderator_controls", "name": "Moderator Controls", "description": "Reserved -- host/moderator controls are always available to hosts today, not gated by this flag; toggling this has no effect.", "enabled": True},
+    {"key": "breakout_rooms", "name": "Breakout Rooms", "description": "Reserved -- no breakout-rooms feature is implemented yet; toggling this has no effect.", "enabled": False},
+    {"key": "reactions", "name": "Reactions", "description": "Reserved -- no distinct reactions feature is gated by this flag; toggling this has no effect.", "enabled": True},
+    {"key": "experimental_features", "name": "Experimental Features", "description": "Reserved -- no experimental-feature gate currently reads this flag; toggling this has no effect.", "enabled": False},
 ]
 
 VOICE_MODEL_DEFAULTS = [
@@ -334,6 +350,38 @@ async def public_languages() -> dict:
     return {"items": [{"code": row.get("code") or row.get("key"), "name": row.get("name"), "translation_enabled": row.get("translation_enabled", True), "stt_enabled": row.get("stt_enabled", True), "tts_enabled": row.get("tts_enabled", True)} for row in rows]}
 
 
+KNOWN_WHISPER_MODELS = {
+    "tiny", "tiny.en", "base", "base.en", "small", "small.en",
+    "medium", "medium.en", "large-v1", "large-v2", "large-v3", "distil-large-v3",
+}
+KNOWN_STT_PROVIDERS = {"faster_whisper"}
+KNOWN_TTS_PROVIDERS = {"piper"}
+KNOWN_TRANSLATION_PROVIDERS = {"libretranslate"}
+# Deployment-controlled via WHISPER_DEVICE/WHISPER_COMPUTE_TYPE env vars on
+# the public backend process -- an admin-submitted override here would be
+# silently ignored at runtime, so these are never persisted from this API.
+AI_SETTINGS_READONLY_KEYS = {"whisper_device", "whisper_compute_type"}
+
+
+def _validate_ai_settings(values: dict) -> None:
+    if "whisper_model" in values and values["whisper_model"] not in KNOWN_WHISPER_MODELS:
+        raise HTTPException(status_code=400, detail=f"Unknown Whisper model '{values['whisper_model']}'. Supported: {', '.join(sorted(KNOWN_WHISPER_MODELS))}")
+    if "whisper_beam_size" in values:
+        beam = values["whisper_beam_size"]
+        if not isinstance(beam, int) or isinstance(beam, bool) or not (1 <= beam <= 10):
+            raise HTTPException(status_code=400, detail="whisper_beam_size must be an integer between 1 and 10")
+    if "stt_provider" in values and values["stt_provider"] not in KNOWN_STT_PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Unsupported stt_provider '{values['stt_provider']}'. Only {', '.join(sorted(KNOWN_STT_PROVIDERS))} is currently implemented.")
+    if "tts_provider" in values and values["tts_provider"] not in KNOWN_TTS_PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Unsupported tts_provider '{values['tts_provider']}'. Only {', '.join(sorted(KNOWN_TTS_PROVIDERS))} is currently implemented.")
+    if "translation_provider" in values and values["translation_provider"] not in KNOWN_TRANSLATION_PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Unsupported translation_provider '{values['translation_provider']}'. Only {', '.join(sorted(KNOWN_TRANSLATION_PROVIDERS))} is currently implemented.")
+    if "piper_timeout_seconds" in values:
+        timeout = values["piper_timeout_seconds"]
+        if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
+            raise HTTPException(status_code=400, detail="piper_timeout_seconds must be a positive number")
+
+
 @router.get("/translation-settings")
 async def get_translation_settings(_: Annotated[dict, Depends(require_permission("translation.read"))]) -> dict:
     defaults = {
@@ -349,9 +397,12 @@ async def get_translation_settings(_: Annotated[dict, Depends(require_permission
 
 @router.patch("/translation-settings")
 async def update_translation_settings(body: SettingsUpdate, admin: Annotated[dict, Depends(require_permission("translation.write"))]) -> dict:
+    if "stt_model" in body.values and body.values["stt_model"] not in KNOWN_WHISPER_MODELS:
+        raise HTTPException(status_code=400, detail=f"Unknown Whisper model '{body.values['stt_model']}'. Supported: {', '.join(sorted(KNOWN_WHISPER_MODELS))}")
+
     item = await PlatformRepository(get_db()).upsert_by_key("platform_settings", "translation", {"values": body.values, "updated_by": str(admin["_id"])})
     await AuditRepository(get_db()).record(str(admin["_id"]), "translation_settings.update", "settings", "translation")
-    
+
     # Publish Redis command for live settings synchronization
     from app.control_plane import control_plane
     import asyncio
@@ -374,41 +425,120 @@ async def public_translation_settings() -> dict:
     return {"values": {key: value for key, value in values.items() if key in safe_keys}}
 
 
+AI_SETTINGS_DEFAULTS = {
+    "stt_provider": "faster_whisper",
+    "whisper_model": "base",
+    "whisper_device": "cpu",
+    "whisper_compute_type": "int8",
+    "whisper_beam_size": 5,
+    "tts_provider": "piper",
+    "piper_default_voice": "en-neutral",
+    "piper_timeout_seconds": 45,
+    "translation_provider": "libretranslate",
+    "translation_provider_url": "http://127.0.0.1:5000",
+    "voice_auto_download": False,
+}
+
+
 @router.get("/ai-settings")
 async def get_ai_settings(_: Annotated[dict, Depends(require_permission("translation.read"))]) -> dict:
-    defaults = {
-        "stt_provider": "faster_whisper",
-        "whisper_model": "base",
-        "whisper_device": "cpu",
-        "whisper_compute_type": "int8",
-        "whisper_beam_size": 5,
-        "tts_provider": "piper",
-        "piper_default_voice": "en-neutral",
-        "piper_timeout_seconds": 45,
-        "translation_provider": "libretranslate",
-        "translation_provider_url": "http://127.0.0.1:5000",
-        "voice_auto_download": False,
-    }
     item = await PlatformRepository(get_db()).get_by_key("platform_settings", "ai_models")
-    return {"key": "ai_models", "values": item.get("values", defaults) if item else defaults}
+    values = dict(item.get("values", AI_SETTINGS_DEFAULTS) if item else AI_SETTINGS_DEFAULTS)
+
+    # whisper_model/whisper_beam_size/translation_provider_url are the same
+    # knobs as Translation Settings' stt_model/beam_size/libretranslate_endpoint
+    # -- the fields app/stt/service.py and app/translation/service.py actually
+    # read -- so this page always reflects the live value instead of a
+    # second, independently-drifting copy.
+    translation_item = await PlatformRepository(get_db()).get_by_key("platform_settings", "translation")
+    translation_values = translation_item.get("values", {}) if translation_item else {}
+    if "stt_model" in translation_values:
+        values["whisper_model"] = translation_values["stt_model"]
+    if "beam_size" in translation_values:
+        values["whisper_beam_size"] = translation_values["beam_size"]
+    if "libretranslate_endpoint" in translation_values:
+        values["translation_provider_url"] = translation_values["libretranslate_endpoint"]
+
+    # whisper_device/whisper_compute_type can't be changed from this API (see
+    # update_ai_settings) -- always show the actual deployment default rather
+    # than a stored value that was never applied.
+    values["whisper_device"] = AI_SETTINGS_DEFAULTS["whisper_device"]
+    values["whisper_compute_type"] = AI_SETTINGS_DEFAULTS["whisper_compute_type"]
+
+    return {"key": "ai_models", "values": values}
 
 
 @router.patch("/ai-settings")
 async def update_ai_settings(body: SettingsUpdate, admin: Annotated[dict, Depends(require_permission("translation.write"))]) -> dict:
-    item = await PlatformRepository(get_db()).upsert_by_key("platform_settings", "ai_models", {"values": body.values, "updated_by": str(admin["_id"])})
-    await AuditRepository(get_db()).record(str(admin["_id"]), "ai_settings.update", "settings", "ai_models")
+    _validate_ai_settings(body.values)
+    values = {k: v for k, v in body.values.items() if k not in AI_SETTINGS_READONLY_KEYS}
+
+    item = await PlatformRepository(get_db()).upsert_by_key("platform_settings", "ai_models", {"values": values, "updated_by": str(admin["_id"])})
+    await AuditRepository(get_db()).record(str(admin["_id"]), "ai_settings.update", "settings", "ai_models", values)
 
     from app.control_plane import control_plane
     import asyncio
+
+    # whisper_model/whisper_beam_size/translation_provider_url are edited
+    # here but consumed from platform_settings{key:"translation"} -- write
+    # through into that document and reuse its already-wired live-reload path
+    # (see websocket_manager.py's UPDATE_SETTINGS handler, which calls
+    # stt_service.update_model() when stt_model changes) instead of building
+    # a second, disconnected settings pipeline. Only the keys that actually
+    # changed are published, so a beam_size-only edit doesn't trigger an
+    # unnecessary Whisper model reload.
+    mirrored = {}
+    if "whisper_model" in values:
+        mirrored["stt_model"] = values["whisper_model"]
+    if "whisper_beam_size" in values:
+        mirrored["beam_size"] = values["whisper_beam_size"]
+    if "translation_provider_url" in values:
+        mirrored["libretranslate_endpoint"] = values["translation_provider_url"]
+    if mirrored:
+        translation_item = await PlatformRepository(get_db()).get_by_key("platform_settings", "translation")
+        translation_values = dict(translation_item.get("values", {})) if translation_item else {}
+        translation_values.update(mirrored)
+        await PlatformRepository(get_db()).upsert_by_key("platform_settings", "translation", {"values": translation_values, "updated_by": str(admin["_id"])})
+        asyncio.create_task(
+            control_plane.publish_and_wait(
+                command_type="UPDATE_SETTINGS",
+                actor_id=str(admin["_id"]),
+                actor_email=admin.get("email", ""),
+                payload={"key": "translation", "values": mirrored}
+            )
+        )
+
     asyncio.create_task(
         control_plane.publish_and_wait(
             command_type="UPDATE_SETTINGS",
             actor_id=str(admin["_id"]),
             actor_email=admin.get("email", ""),
-            payload={"key": "ai_models", "values": body.values}
+            payload={"key": "ai_models", "values": values}
         )
     )
     return serialize(item)
+
+
+@router.get("/ai-settings/status")
+async def get_ai_runtime_status(_: Annotated[dict, Depends(require_permission("translation.read"))]) -> dict:
+    """Live STT/TTS runtime status proxied from the public backend -- what
+    model is actually loaded and ready right now, not just what's persisted
+    in MongoDB. Read-only; never exposes secrets or filesystem paths beyond
+    what the backend's own /stt/status and /tts/status already return."""
+    from app.config import get_settings
+    import httpx
+
+    settings = get_settings()
+    base_url = settings.PUBLIC_BACKEND_URL.rstrip("/")
+    result = {"stt": None, "tts": None}
+    async with httpx.AsyncClient(timeout=5.0, verify=settings.HEALTH_VERIFY_TLS) as client:
+        for key, path in (("stt", "/stt/status"), ("tts", "/tts/status")):
+            try:
+                response = await client.get(f"{base_url}{path}")
+                result[key] = response.json() if response.status_code == 200 else {"error": f"HTTP {response.status_code}"}
+            except Exception as exc:
+                result[key] = {"error": str(exc)}
+    return result
 
 
 @router.get("/meeting-policy")
@@ -424,6 +554,13 @@ async def get_meeting_policy(_: Annotated[dict, Depends(require_permission("sett
         "idle_participant_timeout_minutes": 30,
         "allow_guest_join": True,
         "require_host_to_start": False,
+        "max_file_size_mb": 25,
+        "allowed_file_extensions": [
+            ".pdf", ".docx", ".doc", ".ppt", ".pptx",
+            ".png", ".jpg", ".jpeg", ".gif", ".webp",
+            ".mp3", ".wav", ".m4a", ".ogg",
+            ".mp4", ".webm", ".mov", ".avi",
+        ],
     }
     item = await PlatformRepository(get_db()).get_by_key("platform_settings", "meeting_policy")
     return {"key": "meeting_policy", "values": item.get("values", defaults) if item else defaults}
@@ -455,6 +592,7 @@ async def public_meeting_policy() -> dict:
         "max_participants", "waiting_room_enabled", "screen_sharing_enabled",
         "recording_enabled_default", "translation_enabled_default", "captions_enabled_default",
         "meeting_timeout_minutes", "idle_participant_timeout_minutes", "allow_guest_join", "require_host_to_start",
+        "max_file_size_mb", "allowed_file_extensions",
     }
     return {"values": {key: value for key, value in values.items() if key in safe_keys}}
 
@@ -495,6 +633,7 @@ async def get_branding_settings(_: Annotated[dict, Depends(require_permission("s
         "copyright_text": "© 2026 VOXO by WorknAI Technologies India Pvt. Ltd. All rights reserved.",
         "company_name": "WorknAI Technologies India Pvt. Ltd.",
         "company_email": "support@worknai.tech",
+        "company_website": "",
         "social_twitter": "",
         "social_linkedin": "",
         "social_github": "",
@@ -648,7 +787,20 @@ async def update_role(key: str, body: SettingsUpdate, admin: Annotated[dict, Dep
     if invalid:
         raise HTTPException(status_code=400, detail=f"Unknown permissions: {', '.join(sorted(invalid))}")
     item = await PlatformRepository(get_db()).upsert_by_key("admin_roles", key, body.values)
-    await AuditRepository(get_db()).record(str(admin["_id"]), "role.update", "admin_role", key)
+
+    # require_permission() reads admin_permissions off each user document, a
+    # snapshot taken when the role was assigned -- without this, editing a
+    # role's permissions here would silently do nothing for every admin
+    # already assigned to it until they were individually re-saved.
+    propagated = 0
+    if "permissions" in body.values:
+        result = await get_db()["users"].update_many(
+            {"role": "admin", "admin_role": key},
+            {"$set": {"admin_permissions": body.values["permissions"]}},
+        )
+        propagated = result.modified_count
+
+    await AuditRepository(get_db()).record(str(admin["_id"]), "role.update", "admin_role", key, {"propagated_to_users": propagated})
     return serialize(item)
 
 
@@ -879,6 +1031,19 @@ class VoiceRoutingUpdate(BaseModel):
 async def update_voice_routing(body: VoiceRoutingUpdate, admin: Annotated[dict, Depends(require_permission("voices.write"))]) -> dict:
     db = get_db()
     platform_repo = PlatformRepository(db)
+
+    requested_keys = {
+        voice_key
+        for prefs in body.routing.values()
+        for voice_key in prefs.values()
+        if voice_key
+    }
+    if requested_keys:
+        known_keys = {row["key"] async for row in db["voice_models"].find({"key": {"$in": list(requested_keys)}}, {"key": 1})}
+        unknown = requested_keys - known_keys
+        if unknown:
+            raise HTTPException(status_code=400, detail=f"Unknown voice model key(s): {', '.join(sorted(unknown))}. Scan voices first or check the catalog.")
+
     item = await platform_repo.upsert_by_key(
         "platform_settings",
         "voice_routing",

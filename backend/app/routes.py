@@ -174,7 +174,15 @@ async def _get_user_from_token(token: Optional[str]) -> Optional[dict]:
         return None
     db = get_db()
     repo = UserRepository(db)
-    return await repo.get_by_id(payload.get("sub", ""))
+    user = await repo.get_by_id(payload.get("sub", ""))
+    # A still-valid JWT survives an admin disabling/banning the account until
+    # the token expires -- REST calls already reject disabled users here (see
+    # app/auth/dependencies.py's get_current_user), but this websocket/file
+    # auth path didn't, so a banned user could still open a brand-new meeting
+    # connection. Match the REST behavior.
+    if not user or user.get("is_disabled") or user.get("deleted_at"):
+        return None
+    return user
 
 
 @router.websocket("/ws/{room_id}/{user_lang}")
@@ -615,14 +623,28 @@ async def public_branding() -> dict:
         "product_name": "VOXO",
         "site_title": "VOXO — Real-Time Multilingual Platform",
         "logo_url": "",
+        "logo_dark_url": "",
         "favicon_url": "",
+        "favicon_dark_url": "",
+        "og_image": "",
+        "twitter_card": "",
+        "meta_description": "Meet, speak, and collaborate in any language instantly with self-hosted AI voice translation.",
+        "seo_keywords": "multilingual meeting, voice translation, whisper stt, piper tts, self-hosted AI, webrtc",
         "accent_color": "#3B82F6",
         "primary_color": "#0F172A",
         "secondary_color": "#1E293B",
         "font_family": "Inter, system-ui, sans-serif",
+        "heading_font_family": "",
         "border_radius": "0.75rem",
         "footer_text": "Meet, speak, and collaborate across languages.",
         "copyright_text": "© 2026 VOXO by WorknAI Technologies India Pvt. Ltd.",
+        "company_name": "WorknAI Technologies India Pvt. Ltd.",
+        "company_email": "support@worknai.tech",
+        "company_website": "",
+        "social_twitter": "",
+        "social_linkedin": "",
+        "social_github": "",
+        "social_youtube": "",
     }
     values = item.get("values", defaults) if item else defaults
     return {"branding": values}
@@ -1133,17 +1155,19 @@ async def upload_meeting_file(
                     detail="File sharing is disabled by the meeting host.",
                 )
 
-    # 1. Enforce extension checks
+    # 1. Enforce extension checks (admin-configurable via meeting_policy, see runtime_settings.py)
+    from app.runtime_settings import runtime_settings
+    policy = runtime_settings.meeting_policy
     filename = os.path.basename(file.filename or "")
     if not filename:
         raise HTTPException(status_code=400, detail="A filename is required.")
     ext = os.path.splitext(filename)[1].lower()
-    allowed_extensions = {
+    allowed_extensions = set(policy.get("allowed_file_extensions") or [
         ".pdf", ".docx", ".doc", ".ppt", ".pptx",
         ".png", ".jpg", ".jpeg", ".gif", ".webp",
         ".mp3", ".wav", ".m4a", ".ogg",
         ".mp4", ".webm", ".mov", ".avi"
-    }
+    ])
     if ext not in allowed_extensions:
         raise HTTPException(
             status_code=400,
@@ -1155,8 +1179,8 @@ async def upload_meeting_file(
     file_path = _resolve_upload_path(room_id, file_id, filename)
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
-    # 2. Enforce 25MB file size limit during chunked stream copy
-    MAX_SIZE = 25 * 1024 * 1024 # 25MB
+    # 2. Enforce admin-configured file size limit during chunked stream copy
+    MAX_SIZE = int(policy.get("max_file_size_mb") or 25) * 1024 * 1024
     size = 0
 
     try:
@@ -1172,7 +1196,7 @@ async def upload_meeting_file(
                         os.remove(file_path)
                     raise HTTPException(
                         status_code=400,
-                        detail="File size exceeds the maximum limit of 25MB."
+                        detail=f"File size exceeds the maximum limit of {MAX_SIZE // (1024 * 1024)}MB."
                     )
                 f.write(chunk)
     except HTTPException:

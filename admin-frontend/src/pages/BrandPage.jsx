@@ -26,6 +26,7 @@ export default function BrandPage() {
     copyright_text: "© 2026 VOXO by WorknAI Technologies India Pvt. Ltd. All rights reserved.",
     company_name: "WorknAI Technologies India Pvt. Ltd.",
     company_email: "support@worknai.tech",
+    company_website: "",
     social_twitter: "",
     social_linkedin: "",
     social_github: "",
@@ -309,6 +310,15 @@ export default function BrandPage() {
                 type="email"
                 value={form.company_email}
                 onChange={(e) => handleChange("company_email", e.target.value)}
+              />
+            </label>
+            <label>
+              <span>Company Website</span>
+              <input
+                type="text"
+                value={form.company_website}
+                onChange={(e) => handleChange("company_website", e.target.value)}
+                placeholder="www.voxo.ai"
               />
             </label>
             <label style={{ gridColumn: "span 2" }}>

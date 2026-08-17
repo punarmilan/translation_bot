@@ -197,7 +197,7 @@ def test_missing_permission_is_rejected(client):
     # Fixture teardown clears all dependency_overrides after the test, so this
     # override does not need to be manually restored.
     fastapi_app.dependency_overrides[security.require_admin] = _forbidden_admin
-    response = client.post("/api/admin/cms/pages", json={"page": "pricing", "label": "Pricing"})
+    response = client.post("/api/admin/cms/pages", json={"page": "sample-page-2", "label": "Sample Page 2"})
     assert response.status_code == 403
 
 
@@ -334,7 +334,7 @@ def test_preview_token_mint_requires_content_read_permission(client):
         # restricted admin, matching test_missing_permission_is_rejected above.
         return {"_id": ObjectId(), "email": "limited@test.local", "admin_permissions": ["dashboard.read"]}
 
-    create_page(client, page="pricing")
+    create_page(client, page="sample-page-3")
     fastapi_app.dependency_overrides[security.require_admin] = _no_permissions_admin
-    response = client.post("/api/admin/cms/pages/pricing/preview-token")
+    response = client.post("/api/admin/cms/pages/sample-page-3/preview-token")
     assert response.status_code == 403

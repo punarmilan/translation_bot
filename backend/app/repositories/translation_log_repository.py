@@ -19,7 +19,7 @@ class TranslationLogRepository:
         target_language: str,
         transcript: str,
         translated_text: str,
-        latency_ms: int,
+        latency_ms: int | None,
         cache_hit: bool,
         voice_model: str | None,
         translation_success: bool,

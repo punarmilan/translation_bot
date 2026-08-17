@@ -6,12 +6,18 @@ logger = logging.getLogger(__name__)
 
 class RuntimeSettingsManager:
     def __init__(self) -> None:
+        # Phase 10 audit: live_captions/recording/screen_sharing/waiting_room/
+        # captions were removed from here -- they were pure duplicates of
+        # meeting_policy's captions_enabled_default/recording_enabled_default/
+        # screen_sharing_enabled/waiting_room_enabled (see runtime_settings.py's
+        # meeting_policy dict below), which are the ones actually snapshotted
+        # onto rooms and enforced. Two configuration paths for the same
+        # concept is exactly the kind of drift meeting_policy was built to
+        # prevent -- keeping both invites an admin to toggle the dead one and
+        # wonder why nothing changed.
         self.feature_flags: dict[str, bool] = {
             "video_calling": True,
             "voice_translation": True,
-            "live_captions": True,
-            "recording": True,
-            "screen_sharing": True,
             "meeting_summary": True,
             "experimental_features": False,
             "stt": True,
@@ -24,17 +30,17 @@ class RuntimeSettingsManager:
             "blogs": True,
             "payments": False,
             "invitations": True,
-            "waiting_room": True,
             "moderator_controls": True,
             "breakout_rooms": False,
             "reactions": True,
-            "captions": True,
         }
         self.branding_settings: dict = {
             "product_name": "VOXO",
             "site_title": "VOXO — Real-Time Multilingual Platform",
             "logo_url": "",
+            "logo_dark_url": "",
             "favicon_url": "",
+            "favicon_dark_url": "",
             "og_image": "",
             "twitter_card": "",
             "meta_description": "Meet, speak, and collaborate in any language instantly with self-hosted AI voice translation.",
@@ -43,16 +49,23 @@ class RuntimeSettingsManager:
             "primary_color": "#0F172A",
             "secondary_color": "#1E293B",
             "font_family": "Inter, system-ui, sans-serif",
+            "heading_font_family": "",
             "border_radius": "0.75rem",
             "button_style": "glass",
             "footer_text": "Meet, speak, and collaborate across languages.",
             "copyright_text": "© 2026 VOXO by WorknAI Technologies India Pvt. Ltd. All rights reserved.",
             "company_name": "WorknAI Technologies India Pvt. Ltd.",
             "company_email": "support@worknai.tech",
+            "company_website": "",
+            "social_twitter": "",
+            "social_linkedin": "",
+            "social_github": "",
+            "social_youtube": "",
         }
         self.translation_settings: dict = {
             "libretranslate_endpoint": "http://127.0.0.1:5000",
             "stt_model": "base",
+            "beam_size": 5,
             "detection_confidence": 0.72,
             "cache_timeout_seconds": 3600,
             "translation_timeout_seconds": 8.0,
@@ -64,6 +77,31 @@ class RuntimeSettingsManager:
             "tts_profile": "natural",
             "auto_play_translated_audio": True,
         }
+        # AI Management page's own settings document (platform_settings{key:"ai_models"}).
+        # whisper_model/whisper_beam_size are display/edit mirrors of
+        # translation_settings' stt_model/beam_size (the actual values
+        # STTProvider reads) rather than a second independent source of
+        # truth -- see admin-backend's update_ai_settings() write-through.
+        # whisper_device/whisper_compute_type are deployment-controlled
+        # (WHISPER_DEVICE/WHISPER_COMPUTE_TYPE env vars on this process) and
+        # are never written from here.
+        self.ai_settings: dict = {
+            "stt_provider": "faster_whisper",
+            "whisper_model": "base",
+            "whisper_beam_size": 5,
+            "whisper_device": "cpu",
+            "whisper_compute_type": "int8",
+            "tts_provider": "piper",
+            "piper_default_voice": "en-neutral",
+            "piper_timeout_seconds": 45,
+            "translation_provider": "libretranslate",
+            "translation_provider_url": "http://127.0.0.1:5000",
+            "voice_auto_download": False,
+        }
+        # Per-language/preference Piper voice assignments set via
+        # /api/admin/voices/routing (see VoicesPage.jsx); consumed by
+        # app/tts/voice_router.py's resolve_voice_route().
+        self.voice_routing: dict = {}
         self.general_settings: dict = {
             "product_name": "VOXO",
             "support_email": "support@worknai.tech",
@@ -88,6 +126,13 @@ class RuntimeSettingsManager:
             "idle_participant_timeout_minutes": 30,
             "allow_guest_join": True,
             "require_host_to_start": False,
+            "max_file_size_mb": 25,
+            "allowed_file_extensions": [
+                ".pdf", ".docx", ".doc", ".ppt", ".pptx",
+                ".png", ".jpg", ".jpeg", ".gif", ".webp",
+                ".mp3", ".wav", ".m4a", ".ogg",
+                ".mp4", ".webm", ".mov", ".avi",
+            ],
         }
         self.landing_sections: list = []
         self.enabled_languages: set[str] = {"ar", "de", "en", "es", "fr", "hi", "it", "nl", "pt", "ru"}
@@ -118,6 +163,14 @@ class RuntimeSettingsManager:
             if policy_doc and "values" in policy_doc:
                 self.meeting_policy.update(policy_doc["values"])
 
+            ai_doc = await db["platform_settings"].find_one({"key": "ai_models"})
+            if ai_doc and "values" in ai_doc:
+                self.ai_settings.update(ai_doc["values"])
+
+            routing_doc = await db["platform_settings"].find_one({"key": "voice_routing"})
+            if routing_doc and "values" in routing_doc:
+                self.voice_routing.update(routing_doc["values"])
+
             sections = await db["landing_sections"].find({}).sort("order", 1).to_list(length=100)
             if sections:
                 self.landing_sections = sections
@@ -145,6 +198,12 @@ class RuntimeSettingsManager:
         elif category == "meeting_policy":
             self.meeting_policy.update(values)
             logger.info(f"Updated meeting policy: {values}")
+        elif category == "ai_models":
+            self.ai_settings.update(values)
+            logger.info(f"Updated AI settings: {values}")
+        elif category == "voice_routing":
+            self.voice_routing.update(values)
+            logger.info(f"Updated voice routing: {values}")
 
     def update_language(self, code: str, enabled: bool) -> None:
         if enabled:

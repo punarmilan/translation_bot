@@ -746,13 +746,25 @@ export default function ChatPage() {
   const [chatEnabled, setChatEnabled] = useState(true);
   const [translationEnabledByAdmin, setTranslationEnabledByAdmin] = useState(true);
   const [roomLocked, setRoomLocked] = useState(false);
+  const [screenSharingEnabledByAdmin, setScreenSharingEnabledByAdmin] = useState(true);
+  const [recordingEnabledByAdmin, setRecordingEnabledByAdmin] = useState(true);
+  const [captionsEnabledByAdmin, setCaptionsEnabledByAdmin] = useState(true);
   const [featureFlags, setFeatureFlags] = useState({
     video_calling: true,
     voice_translation: true,
-    live_captions: true,
-    recording: true,
-    screen_sharing: true,
+    whiteboard: true,
+    files: true,
+    meeting_notes: true,
+    diagnostics: true,
   });
+
+  useEffect(() => {
+    const flagKeyForPanel = { whiteboard: "whiteboard", notes: "meeting_notes", files: "files", diagnostics: "diagnostics" };
+    const requiredFlag = flagKeyForPanel[meetingPanel];
+    if (requiredFlag && featureFlags[requiredFlag] === false) {
+      setMeetingPanel("chat");
+    }
+  }, [meetingPanel, featureFlags]);
 
   const socketRef = useRef(null);
   const socketInstanceRef = useRef(0);
@@ -1022,6 +1034,13 @@ export default function ChatPage() {
       setRoomLocked(Boolean(payload.locked));
       setChatEnabled(payload.chat_enabled !== false);
       setTranslationEnabledByAdmin(payload.translation_enabled !== false);
+      setScreenSharingEnabledByAdmin(payload.screen_sharing_enabled !== false);
+      setRecordingEnabledByAdmin(payload.recording_enabled !== false);
+      const captionsEnabled = payload.captions_enabled !== false;
+      setCaptionsEnabledByAdmin(captionsEnabled);
+      if (!captionsEnabled) {
+        setCaptionSettings((current) => ({ ...current, showCaptions: false }));
+      }
       return true;
     }
     if (payload.type === "feature_flag_update") {
@@ -1675,6 +1694,10 @@ export default function ChatPage() {
 
   const toggleScreenShare = async () => {
     if (!isConnected) return;
+    if (!isScreenSharing && !screenSharingEnabledByAdmin) {
+      setCallError("Screen sharing has been disabled by an administrator.");
+      return;
+    }
     if (userRole !== "host" && userRole !== "admin" && userRole !== "co-host") {
       if (!hostPermissions.allow_share) {
         setCallError("Screen sharing is disabled by the meeting host.");
@@ -1777,6 +1800,10 @@ export default function ChatPage() {
 
   const updateRecording = (status) => {
     if (userRole !== "host" && userRole !== "admin" && userRole !== "co-host") return;
+    if (status === "recording" && !recordingEnabledByAdmin) {
+      setCallError("Recording has been disabled by an administrator.");
+      return;
+    }
     sendSocketMessage({
       type: "recording_update",
       room_id: session.roomId,
@@ -2126,6 +2153,14 @@ export default function ChatPage() {
           // token/params would just fail again in a tight loop. Stop and
           // surface it instead of spinning.
           setConnectionError(`${message}. Please sign in again to reconnect.`);
+          return;
+        }
+        if (!intentionalCloseRef.current && event.code === 4001) {
+          // Meeting-policy rejection (participant limit reached, waiting for the
+          // host, or guest access disabled -- see MeetingPolicyRejected on the
+          // backend). Retrying immediately would just be rejected again, so stop
+          // and show the admin-configured reason instead of looping forever.
+          setConnectionError(event.reason || "This meeting cannot be joined right now.");
           return;
         }
         setConnectionError(
@@ -2853,7 +2888,7 @@ export default function ChatPage() {
             />
 
             {/* Floating Live Captions Overlay */}
-            {captionSettings.showCaptions && activeCaption && (
+            {captionsEnabledByAdmin && captionSettings.showCaptions && activeCaption && (
               <div 
                 className="pointer-events-none absolute left-0 right-0 flex justify-center z-20"
                 style={{
@@ -2942,12 +2977,17 @@ export default function ChatPage() {
 
             <button
               onClick={toggleScreenShare}
+              disabled={!isScreenSharing && !screenSharingEnabledByAdmin}
               className={`p-3 rounded-full transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-brand-accent ${
                 isScreenSharing
                   ? "bg-brand-accent text-white"
                   : "bg-white/[0.06] text-brand-bg/85 hover:bg-white/[0.12]"
-              }`}
-              title={isScreenSharing ? "Stop Screen Share" : "Share Screen"}
+              } ${!isScreenSharing && !screenSharingEnabledByAdmin ? "opacity-50 cursor-not-allowed" : ""}`}
+              title={
+                !isScreenSharing && !screenSharingEnabledByAdmin
+                  ? "Screen sharing disabled by an administrator"
+                  : isScreenSharing ? "Stop Screen Share" : "Share Screen"
+              }
             >
               <Monitor size={20} />
             </button>
@@ -3013,20 +3053,22 @@ export default function ChatPage() {
                     updateRecording("recording");
                   }
                 }}
-                disabled={!(userRole === "host" || userRole === "admin" || userRole === "co-host")}
+                disabled={!(userRole === "host" || userRole === "admin" || userRole === "co-host") || (recordingStatus.status !== "recording" && !recordingEnabledByAdmin)}
                 className={`px-3 py-1.5 rounded-full transition-all duration-200 text-[10px] font-bold uppercase tracking-wider focus:outline-none focus:ring-2 focus:ring-brand-accent ${
                   recordingStatus.status === "recording"
                     ? "bg-red-650 text-white animate-pulse"
                     : recordingStatus.status === "paused"
                       ? "bg-amber-500 text-white"
                       : "bg-white/[0.06] text-brand-bg/85 hover:bg-white/[0.12]"
-                } ${!(userRole === "host" || userRole === "admin" || userRole === "co-host") ? "opacity-50 cursor-not-allowed" : ""}`}
+                } ${!(userRole === "host" || userRole === "admin" || userRole === "co-host") || (recordingStatus.status !== "recording" && !recordingEnabledByAdmin) ? "opacity-50 cursor-not-allowed" : ""}`}
                 title={
                   !(userRole === "host" || userRole === "admin" || userRole === "co-host")
                     ? `Recording is ${recordingStatus.status}`
-                    : recordingStatus.status === "recording"
-                      ? "Stop Recording"
-                      : "Start Recording"
+                    : recordingStatus.status !== "recording" && !recordingEnabledByAdmin
+                      ? "Recording disabled by an administrator"
+                      : recordingStatus.status === "recording"
+                        ? "Stop Recording"
+                        : "Start Recording"
                 }
               >
                 {recordingStatus.status === "recording" ? "● Rec" : "Record"}
@@ -3198,13 +3240,13 @@ export default function ChatPage() {
       >
         <div className="meeting-panel-tabs" role="tablist" aria-label="Meeting tools">
           {[
-            ["chat", "Chat"],
-            ["translation", "Translation"],
-            ["whiteboard", "Whiteboard"],
-            ["notes", "Notes"],
-            ["files", "Files"],
-            ["diagnostics", "Diagnostics"],
-          ].map(([value, label]) => (
+            ["chat", "Chat", true],
+            ["translation", "Translation", true],
+            ["whiteboard", "Whiteboard", featureFlags.whiteboard !== false],
+            ["notes", "Notes", featureFlags.meeting_notes !== false],
+            ["files", "Files", featureFlags.files !== false],
+            ["diagnostics", "Diagnostics", featureFlags.diagnostics !== false],
+          ].filter(([, , enabled]) => enabled).map(([value, label]) => (
             <button
               key={value}
               type="button"
@@ -3410,11 +3452,17 @@ export default function ChatPage() {
             </div>
             
             <div className="space-y-3.5 text-xs">
-              <label className="flex items-center justify-between cursor-pointer">
+              {!captionsEnabledByAdmin && (
+                <p className="text-ui-muted text-[11px] bg-white/[0.04] rounded-md px-2.5 py-1.5">
+                  Captions have been disabled by an administrator.
+                </p>
+              )}
+              <label className={`flex items-center justify-between ${captionsEnabledByAdmin ? "cursor-pointer" : "cursor-not-allowed opacity-50"}`}>
                 <span>Show Captions</span>
-                <input 
+                <input
                   type="checkbox"
-                  checked={captionSettings.showCaptions}
+                  checked={captionsEnabledByAdmin && captionSettings.showCaptions}
+                  disabled={!captionsEnabledByAdmin}
                   onChange={(e) => setCaptionSettings({ ...captionSettings, showCaptions: e.target.checked })}
                   className="accent-brand-accent h-4 w-4"
                 />

@@ -1,4 +1,5 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useConfig } from "./ConfigContext";
 
 const STORAGE_KEY = "translation_bot_theme";
 const ThemeContext = createContext(null);
@@ -10,7 +11,11 @@ function getInitialTheme() {
 }
 
 export function ThemeProvider({ children }) {
-  const [theme, setTheme] = useState(getInitialTheme);
+  const hadExplicitChoice = useRef(
+    window.localStorage.getItem(STORAGE_KEY) === "light" || window.localStorage.getItem(STORAGE_KEY) === "dark",
+  );
+  const [theme, setThemeState] = useState(getInitialTheme);
+  const { settings } = useConfig();
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -18,11 +23,26 @@ export function ThemeProvider({ children }) {
     window.localStorage.setItem(STORAGE_KEY, theme);
   }, [theme]);
 
+  // Admin-configured default theme (platform_settings{key:"general"}.theme,
+  // fetched into ConfigContext's `settings`) only applies before the visitor
+  // has ever made an explicit choice -- a stored preference at mount, or a
+  // manual toggle during this session, always wins.
+  useEffect(() => {
+    if (!hadExplicitChoice.current && (settings.theme === "light" || settings.theme === "dark")) {
+      setThemeState(settings.theme);
+    }
+  }, [settings.theme]);
+
+  const setTheme = (value) => {
+    hadExplicitChoice.current = true;
+    setThemeState(value);
+  };
+
   const value = useMemo(
     () => ({
       theme,
       setTheme,
-      toggleTheme: () => setTheme((current) => (current === "light" ? "dark" : "light")),
+      toggleTheme: () => setTheme(theme === "light" ? "dark" : "light"),
     }),
     [theme],
   );

@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { MarketingPage, PageHeader, SectionTitle } from "../components/marketing/MarketingPage";
+import { useConfig } from "../contexts/ConfigContext";
 import FAQ from "../components/landing/FAQ";
 import {
   Shield, Sparkles, Cpu, Lock, Globe, Target, Mail, MapPin, Search,
@@ -21,6 +22,10 @@ const helpTopics = [
 ];
 
 export default function AboutPage() {
+  const { branding } = useConfig();
+  const companyName = branding.company_name || "WorknAI Technologies India Pvt. Ltd.";
+  const companyEmail = branding.company_email || "support@worknai.tech";
+  const companyWebsite = branding.company_website || "www.worknai.tech";
   const [activeTab, setActiveTab] = useState("about"); // "about" | "help"
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -33,7 +38,7 @@ export default function AboutPage() {
   return (
     <MarketingPage>
       <PageHeader
-        eyebrow="WorknAI Technologies India Pvt. Ltd."
+        eyebrow={companyName}
         title="About VOXO & Help Centre"
         description="Learn about our privacy-first mission, core values, and access setup guides and troubleshooting support."
       >
@@ -214,7 +219,7 @@ export default function AboutPage() {
       {/* Contact & Company Footer Details */}
       <section className="marketing-section border-t border-white/10 pt-12">
         <div className="landing-shell max-w-3xl mx-auto text-center">
-          <h2 className="text-2xl font-bold text-brand-bg mb-2">WorknAI Technologies India Pvt. Ltd.</h2>
+          <h2 className="text-2xl font-bold text-brand-bg mb-2">{companyName}</h2>
           <p className="text-xs text-ui-muted leading-relaxed mb-6">
             Building next-generation real-time voice translation systems for enterprise teams, public institutions, and international organizations.
           </p>
@@ -224,10 +229,10 @@ export default function AboutPage() {
               <MapPin size={15} className="text-brand-accent" /> India
             </span>
             <span className="flex items-center gap-2">
-              <Mail size={15} className="text-brand-accent" /> support@worknai.tech
+              <Mail size={15} className="text-brand-accent" /> {companyEmail}
             </span>
             <span className="flex items-center gap-2">
-              <Globe size={15} className="text-brand-accent" /> www.worknai.tech
+              <Globe size={15} className="text-brand-accent" /> {companyWebsite}
             </span>
           </div>
         </div>

@@ -71,6 +71,33 @@ _SOLUTION_CARD_FIELDS: list[FieldSchema] = [
     {"key": "cta_link", "label": "CTA Link (optional)", "type": "url", "default": ""},
 ]
 
+_NAV_LINK_CARD_FIELDS: list[FieldSchema] = [
+    {"key": "label", "label": "Link label", "type": "text", "default": ""},
+    {"key": "link", "label": "Link URL / path", "type": "url", "default": ""},
+    {"key": "parent_label", "label": "Nest under (optional -- must exactly match another link's label to become a dropdown/mega-menu item under it; leave blank for a top-level link)", "type": "text", "default": ""},
+]
+
+_FOOTER_LINK_CARD_FIELDS: list[FieldSchema] = [
+    {"key": "label", "label": "Link label", "type": "text", "default": ""},
+    {"key": "link", "label": "Link URL / path", "type": "url", "default": ""},
+    {"key": "group", "label": "Group heading (optional -- links sharing the same group are shown together under it; leave blank to keep the current flat layout)", "type": "text", "default": ""},
+]
+
+_PRICING_CARD_FIELDS: list[FieldSchema] = [
+    {"key": "title", "label": "Plan name", "type": "text", "default": ""},
+    {"key": "description", "label": "Description", "type": "textarea", "default": ""},
+    {"key": "currency_symbol", "label": "Currency symbol (e.g. \"$\"; leave blank for custom pricing)", "type": "text", "default": ""},
+    {"key": "price_amount", "label": "Price (monthly) -- e.g. \"19\" or \"Custom\"", "type": "text", "default": ""},
+    {"key": "yearly_price_amount", "label": "Price (annual, optional -- falls back to the monthly price if blank)", "type": "text", "default": ""},
+    {"key": "price_period", "label": "Price period (e.g. \"/mo\"; leave blank for custom pricing)", "type": "text", "default": ""},
+    {"key": "features", "label": "Included features (one per line)", "type": "textarea", "default": ""},
+    {"key": "icon", "label": "Icon / Emoji (optional)", "type": "text", "default": ""},
+    {"key": "badge_text", "label": "Badge text (e.g. \"Most Popular\", optional)", "type": "text", "default": ""},
+    {"key": "highlighted", "label": "Highlighted / Recommended plan", "type": "boolean", "default": False},
+    {"key": "cta_text", "label": "CTA label", "type": "text", "default": ""},
+    {"key": "cta_link", "label": "CTA link (URL or mailto:...; leave blank for a non-linked button)", "type": "url", "default": ""},
+]
+
 SECTION_TYPE_REGISTRY: dict[str, SectionTypeSchema] = {
     "hero": {
         "key": "hero",
@@ -117,6 +144,40 @@ SECTION_TYPE_REGISTRY: dict[str, SectionTypeSchema] = {
         "supports_cards": False,
         "card_fields": [],
     },
+    "navbar": {
+        "key": "navbar",
+        "label": "Global Navigation",
+        "description": "Site-wide header: logo, product name, navigation links (with optional dropdown/mega-menu nesting via a link's 'nest under' field), and the sign-in/CTA buttons. Used by the public site's Navbar on every page.",
+        "fields": [
+            {"key": "logo_image_url", "label": "Logo image (optional -- falls back to the text brand mark if blank)", "type": "image", "default": ""},
+            {"key": "product_name", "label": "Product / company name", "type": "text", "default": ""},
+            {"key": "login_text", "label": "Sign-in link label (shown to signed-out visitors)", "type": "text", "default": ""},
+            {"key": "login_link", "label": "Sign-in link URL", "type": "url", "default": ""},
+            {"key": "cta_text", "label": "Primary CTA label (shown to signed-out visitors)", "type": "text", "default": ""},
+            {"key": "cta_link", "label": "Primary CTA link", "type": "url", "default": ""},
+        ],
+        "supports_cards": True,
+        "card_label": "Nav Link",
+        "card_fields": _NAV_LINK_CARD_FIELDS,
+    },
+    "footer": {
+        "key": "footer",
+        "label": "Global Footer",
+        "description": "Site-wide footer: logo, description/tagline, copyright and legal text, optional contact info, and navigation links (optionally grouped via a link's 'group heading' field). Used by the public site's Footer on every page.",
+        "fields": [
+            {"key": "logo_image_url", "label": "Logo image (optional -- falls back to the text brand mark if blank)", "type": "image", "default": ""},
+            {"key": "product_name", "label": "Product / company name", "type": "text", "default": ""},
+            {"key": "description", "label": "Tagline / description", "type": "textarea", "default": ""},
+            {"key": "cta_label", "label": "Action prompt above the sign-in/CTA buttons", "type": "text", "default": ""},
+            {"key": "copyright_text", "label": "Copyright / legal line", "type": "text", "default": ""},
+            {"key": "secondary_text", "label": "Secondary legal-row text", "type": "text", "default": ""},
+            {"key": "contact_email", "label": "Contact email (optional)", "type": "text", "default": ""},
+            {"key": "contact_phone", "label": "Contact phone (optional)", "type": "text", "default": ""},
+        ],
+        "supports_cards": True,
+        "card_label": "Footer Link",
+        "card_fields": _FOOTER_LINK_CARD_FIELDS,
+    },
     "feature_grid": {
         "key": "feature_grid",
         "label": "Feature Grid",
@@ -134,6 +195,15 @@ SECTION_TYPE_REGISTRY: dict[str, SectionTypeSchema] = {
         "supports_cards": True,
         "card_label": "Solution",
         "card_fields": _SOLUTION_CARD_FIELDS,
+    },
+    "pricing_grid": {
+        "key": "pricing_grid",
+        "label": "Pricing Grid",
+        "description": "Heading plus a grid of pricing-plan cards (price, billing period, included features, optional highlight badge and CTA). Used by the public Pricing page.",
+        "fields": _COMMON_HEADING_FIELDS,
+        "supports_cards": True,
+        "card_label": "Plan",
+        "card_fields": _PRICING_CARD_FIELDS,
     },
     "testimonials": {
         "key": "testimonials",

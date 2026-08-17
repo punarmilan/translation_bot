@@ -9,7 +9,9 @@ from starlette.responses import JSONResponse
 
 from app.config import get_settings
 from app.cms.migrate_features_solutions import migrate_features_and_solutions
+from app.cms.migrate_global_nav_footer import migrate_global_nav_footer
 from app.cms.migrate_landing import migrate_landing_page
+from app.cms.migrate_pricing import migrate_pricing
 from app.database import connect_db, disconnect_db, get_db
 from app.repositories.audit_repository import AuditRepository
 from app.repositories.blog_repository import BlogRepository
@@ -21,6 +23,19 @@ from app.repositories.session_repository import AdminSessionRepository
 from app.repositories.user_repository import AdminUserRepository
 from app.routers import auth, blog, cms, dashboard, infrastructure, media, meetings, platform, system, users, enterprise
 
+
+# Phase 10: live_captions/recording/screen_sharing/waiting_room/captions were
+# removed from FEATURE_FLAG_DEFAULTS -- they duplicated meeting_policy's
+# already-live equivalents. That only stops *seeding* these keys; any
+# document already persisted from before this change stays in Mongo forever
+# otherwise, so the "duplicate configuration path" this was meant to remove
+# would just move from the defaults list into the database. Deleted once,
+# idempotently, on startup.
+_DEPRECATED_FEATURE_FLAG_KEYS = ["live_captions", "recording", "screen_sharing", "waiting_room", "captions"]
+
+
+async def _cleanup_deprecated_feature_flags(db) -> None:
+    await db["feature_flags"].delete_many({"key": {"$in": _DEPRECATED_FEATURE_FLAG_KEYS}})
 
 
 @asynccontextmanager
@@ -36,6 +51,9 @@ async def lifespan(_: FastAPI):
     await BlogRepository(get_db()).create_indexes()
     await migrate_landing_page(get_db())
     await migrate_features_and_solutions(get_db())
+    await migrate_pricing(get_db())
+    await migrate_global_nav_footer(get_db())
+    await _cleanup_deprecated_feature_flags(get_db())
     yield
     await disconnect_db()
 

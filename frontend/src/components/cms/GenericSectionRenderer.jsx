@@ -194,6 +194,9 @@ function GenericSection({ section }) {
         </section>
       );
     case "feature_grid":
+    case "pricing_grid":
+    case "navbar":
+    case "footer":
     case "custom":
     default:
       return (

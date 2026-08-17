@@ -745,6 +745,11 @@ class RoomConnectionManager:
             language_hint=sender_session.preferred_language,
         )
         result_by_language: dict[str, TranslationResult] = {}
+        # Real per-language translation latency, so translation_logs entries
+        # from text chat don't have to fabricate a 0ms figure (previously
+        # hardcoded below, which silently diluted the Dashboard/System Health
+        # average-latency metrics with fake zeros).
+        latency_ms_by_language: dict[str, int] = {}
 
         source_language = normalize_language(detection.language)
 
@@ -765,6 +770,7 @@ class RoomConnectionManager:
                 )
                 log_translation_event("translation.skipped", result=result)
             else:
+                started = perf_counter()
                 result = await translate_text(
                     text=text,
                     target_lang=target,
@@ -778,6 +784,7 @@ class RoomConnectionManager:
                         speaker_session_id=sender_session.session_id,
                     ),
                 )
+                latency_ms_by_language[target] = int((perf_counter() - started) * 1000)
 
             result_by_language[target] = result
             return result
@@ -836,11 +843,23 @@ class RoomConnectionManager:
                         source_language=source_language,
                         target_language=target,
                         transcript=text,
-                        translated_text=translated_text,
-                        latency_ms=0,
+                        # Pre-existing bug: this referenced an undefined
+                        # `translated_text` name (only ever defined in the
+                        # separate voice-pipeline function below), so this
+                        # entire call always raised NameError and was
+                        # silently swallowed by this block's except clause --
+                        # no text-chat message has ever actually reached
+                        # translation_logs or update_translation_stats.
+                        translated_text=result.translated,
+                        latency_ms=latency_ms_by_language.get(target),
                         cache_hit=result.cache_hit,
                         voice_model=None,
-                        translation_success=success
+                        translation_success=success,
+                        # Text chat has no STT/TTS stage -- only translation
+                        # latency is real here, and it's the same measurement
+                        # as the voice pipeline's translation_latency_ms, so
+                        # it correctly contributes to that same average.
+                        translation_latency_ms=latency_ms_by_language.get(target),
                     )
                     await room_repo.update_translation_stats(
                         room_id=room_id,

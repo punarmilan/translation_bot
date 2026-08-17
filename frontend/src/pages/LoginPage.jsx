@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { useConfig } from "../contexts/ConfigContext";
 import { forgotPassword, parseApiError } from "../services/api";
 
 export default function LoginPage() {
   const { login } = useAuth();
+  const { branding } = useConfig();
   const navigate = useNavigate();
   const location = useLocation();
   const [form, setForm] = useState({ email: "", password: "" });
@@ -52,8 +54,9 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
-          <Link to="/" className="text-lg font-semibold text-brand-bg">
-            VOXO
+          <Link to="/" className="inline-flex items-center gap-2 text-lg font-semibold text-brand-bg">
+            {branding.logo_url && <img src={branding.logo_url} alt={branding.product_name || "VOXO"} className="h-7 w-auto" />}
+            {branding.product_name || "VOXO"}
           </Link>
           <p className="text-brand-bg/50 mt-2 text-sm">Welcome back</p>
         </div>
