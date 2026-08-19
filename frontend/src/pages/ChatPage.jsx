@@ -33,6 +33,7 @@ import {
   warmupStt,
   getFeatureFlags,
   getPublicLanguages,
+  getTranslationModes,
 } from "../services/api";
 
 const API_HOST = window.location.hostname || "localhost";
@@ -138,8 +139,25 @@ function JoinForm({ user, onJoin, initialRoomId = "", languages = LANGUAGE_OPTIO
     roomId: initialRoomId,
     userLang: user.preferred_language || "en",
     roomRole: user.role === "host" || user.role === "admin" ? "host" : "participant",
+    translationMode: "General",
   });
   const [shareStatus, setShareStatus] = useState("");
+  const [translationModes, setTranslationModes] = useState([{ name: "General", description: "Standard translation settings for general conversation." }]);
+
+  useEffect(() => {
+    let active = true;
+    getTranslationModes()
+      .then((data) => {
+        if (active && data?.items?.length) setTranslationModes(data.items);
+      })
+      .catch(() => {
+        // Admin-configured modes are a nice-to-have here -- "General" (the
+        // backend's own default when no mode is sent) already covers the
+        // join flow if this fetch fails, so there's nothing to surface to
+        // the user.
+      });
+    return () => { active = false; };
+  }, []);
 
   const canJoin = form.roomId.trim();
 
@@ -157,6 +175,7 @@ function JoinForm({ user, onJoin, initialRoomId = "", languages = LANGUAGE_OPTIO
               roomId: form.roomId.trim(),
               userLang: form.userLang,
               role: form.roomRole,
+              translationMode: form.translationMode,
             });
           }}
           className="flex flex-col justify-between"
@@ -240,6 +259,29 @@ function JoinForm({ user, onJoin, initialRoomId = "", languages = LANGUAGE_OPTIO
                   <option value="participant">Participant</option>
                   <option value="host">Host</option>
                 </select>
+              </label>
+              <label className="block sm:col-span-2">
+                <span className="mb-1.5 block text-xs font-medium text-ui-muted">
+                  Translation Mode
+                </span>
+                <select
+                  value={form.translationMode}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, translationMode: event.target.value }))
+                  }
+                  className="ui-input text-sm"
+                >
+                  {translationModes.map((mode) => (
+                    <option key={mode.name} value={mode.name} title={mode.description}>
+                      {mode.name}
+                    </option>
+                  ))}
+                </select>
+                {translationModes.find((mode) => mode.name === form.translationMode)?.description && (
+                  <p className="mt-1 text-[10px] text-ui-subtle">
+                    {translationModes.find((mode) => mode.name === form.translationMode).description}
+                  </p>
+                )}
               </label>
             </div>
           </div>
@@ -2083,8 +2125,14 @@ export default function ChatPage() {
       const token = localStorage.getItem("access_token");
       const roomId = encodeURIComponent(session.roomId);
       const userLang = encodeURIComponent(activeLanguageRef.current || session.userLang);
-      const tokenParam = token ? `?token=${encodeURIComponent(token)}` : "";
-      const socket = new WebSocket(`${WS_BASE_URL}/${roomId}/${userLang}${tokenParam}`);
+      const params = new URLSearchParams();
+      if (token) params.set("token", token);
+      // Selected once in JoinForm and applied for the life of this room
+      // session -- matches how the backend actually consumes it (a
+      // connect-time query param on RoomConnectionManager.connect(), not a
+      // value that can change mid-meeting without reconnecting).
+      params.set("translation_mode", session.translationMode || "General");
+      const socket = new WebSocket(`${WS_BASE_URL}/${roomId}/${userLang}?${params.toString()}`);
       socketRef.current = socket;
 
       socket.onopen = () => {

@@ -26,6 +26,8 @@ import FeedbackPage from "./pages/FeedbackPage";
 import GlossaryPage from "./pages/GlossaryPage";
 import OrganizationsPage from "./pages/OrganizationsPage";
 import InfrastructurePage from "./pages/InfrastructurePage";
+import SecurityPage from "./pages/SecurityPage";
+import DeveloperToolsPage from "./pages/DeveloperToolsPage";
 
 class ErrorBoundary extends Component {
   constructor(props) {
@@ -105,6 +107,8 @@ function AdminAppRoutes() {
           <Route path="/admin/feedback" element={<FeedbackPage />} />
           <Route path="/admin/announcements" element={<RegistryPage module="announcements" eyebrow="Communication" title="Announcements" description="Prepare and manage platform notices for users." />} />
           <Route path="/admin/roles" element={<RolesPage />} />
+          <Route path="/admin/security" element={<SecurityPage />} />
+          <Route path="/admin/developer" element={<DeveloperToolsPage />} />
           <Route path="/admin/logs" element={<AuditLogsPage />} />
           <Route path="/admin/system" element={<SystemHealthPage />} />
           <Route path="/admin/settings" element={<SettingsPage title="Platform Settings" description="Manage organization-wide product defaults and retention controls." />} />

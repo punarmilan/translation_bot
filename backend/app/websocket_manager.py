@@ -84,6 +84,7 @@ class MeetingPolicyRejected(Exception):
 
 OUTBOUND_QUEUE_MAX_SIZE = 100
 DELIVERY_TIMEOUT_SECONDS = 5.0
+FORCE_CLOSE_NOTIFY_GRACE_SECONDS = 0.5
 VOICE_TRANSCRIPTION_TIMEOUT_SECONDS = 90.0
 VOICE_CHUNK_QUEUE_MAX_SIZE = 8
 QUEUE_SHUTDOWN_SENTINEL = "__transport_queue_shutdown__"
@@ -2347,7 +2348,8 @@ class RoomConnectionManager:
                     return self._ack(command, "NOT_CONNECTED", "Target user is not connected.")
                 for session in targets:
                     self._enqueue(session, self._admin_event_payload("force_logout", session.room_id, command, payload), event="force_logout")
-                return self._ack(command, "SUCCESS", f"{len(targets)} active session(s) notified.")
+                    asyncio.create_task(self._force_close_after_notify(session))
+                return self._ack(command, "SUCCESS", f"{len(targets)} active session(s) notified and will be disconnected.")
 
             if not room:
                 return self._ack(command, "ROOM_NOT_FOUND", "Room is not active on this backend.")
@@ -2404,7 +2406,8 @@ class RoomConnectionManager:
                     ]
                     for s in targets:
                         self._enqueue(s, self._admin_event_payload("force_logout", s.room_id, command, {"reason": "Account suspended"}), event="force_logout")
-                    return self._ack(command, "SUCCESS", f"User suspended and kicked from all active sessions.")
+                        asyncio.create_task(self._force_close_after_notify(s, reason="Account suspended by an administrator."))
+                    return self._ack(command, "SUCCESS", f"User suspended and disconnected from all active sessions.")
 
                 if not target or target.room_id != room.room_id:
                     return self._ack(command, "NOT_CONNECTED", "Target participant is not connected to this room.")
@@ -2495,12 +2498,37 @@ class RoomConnectionManager:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
 
-    async def _close_websocket(self, websocket: WebSocket) -> None:
+    async def _close_websocket(self, websocket: WebSocket, code: int = 1000, reason: str | None = None) -> None:
         if websocket.client_state == WebSocketState.DISCONNECTED:
             return
 
         with contextlib.suppress(Exception):
-            await websocket.close()
+            await websocket.close(code=code, reason=reason)
+
+    async def _force_close_after_notify(
+        self,
+        session: "ClientSession",
+        *,
+        code: int = 4003,
+        reason: str = "Access revoked by an administrator.",
+    ) -> None:
+        """Backstop for FORCE_LOGOUT/REMOVE_USER/BAN_USER/SUSPEND_USER: those
+        commands already enqueue a `force_logout` message asking the client
+        to disconnect itself, but that's cooperative only -- nothing stopped
+        an already-open session from simply ignoring it and continuing to
+        use the socket. This gives the outbound queue a brief window to
+        actually deliver that message (better UX: the client sees *why*
+        before losing the connection), then closes the connection itself
+        via the same `_close_websocket()` every organic disconnect already
+        uses. That close causes the owning task's `receive_json()` in
+        routes.py to raise `WebSocketDisconnect`, which runs the existing,
+        already-tested `manager.disconnect()` cleanup path -- no second
+        connection-teardown mechanism, no direct call into `disconnect()`
+        from here (which would deadlock against the lock this method's
+        caller, `apply_admin_command`, is already holding).
+        """
+        await asyncio.sleep(FORCE_CLOSE_NOTIFY_GRACE_SECONDS)
+        await self._close_websocket(session.websocket, code=code, reason=reason)
 
     def _enqueue(self, session: ClientSession, payload: str, event: str) -> bool:
         if not session.connected:

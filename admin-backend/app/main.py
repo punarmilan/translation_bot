@@ -21,7 +21,8 @@ from app.repositories.invitation_repository import AdminInvitationRepository
 from app.repositories.platform_repository import PlatformRepository
 from app.repositories.session_repository import AdminSessionRepository
 from app.repositories.user_repository import AdminUserRepository
-from app.routers import auth, blog, cms, dashboard, infrastructure, media, meetings, platform, system, users, enterprise
+from app.routers import auth, blog, cms, dashboard, developer, infrastructure, media, meetings, platform, security, system, users, enterprise
+from app.security import ALL_ADMIN_PERMISSIONS
 
 
 # Phase 10: live_captions/recording/screen_sharing/waiting_room/captions were
@@ -36,6 +37,33 @@ _DEPRECATED_FEATURE_FLAG_KEYS = ["live_captions", "recording", "screen_sharing",
 
 async def _cleanup_deprecated_feature_flags(db) -> None:
     await db["feature_flags"].delete_many({"key": {"$in": _DEPRECATED_FEATURE_FLAG_KEYS}})
+
+
+async def _sync_administrator_role_permissions(db) -> None:
+    """Keeps the built-in "administrator" role -- and every admin already
+    assigned that role -- in sync with ALL_ADMIN_PERMISSIONS.
+
+    Without this, adding a new permission string to ALL_ADMIN_PERMISSIONS
+    (as this hardening pass did for "security.read"/"security.write") only
+    affects admins whose `admin_permissions` field is entirely absent; any
+    admin created via the normal registration flow has that field snapshotted
+    at creation time (see AdminUserRepository.create_admin) and would 403 on
+    the new permission until manually re-saved. This is exactly the class of
+    bug Phase 10 fixed for `enterprise.read`/`enterprise.write` -- this
+    migration closes it permanently by re-running the same propagation
+    `PATCH /api/admin/roles/administrator` already performs, once per
+    startup, so future permission additions don't need a bespoke fix.
+    """
+    current = sorted(ALL_ADMIN_PERMISSIONS)
+    await db["admin_roles"].update_one(
+        {"key": "administrator"},
+        {"$set": {"permissions": current, "name": "Administrator", "description": "Full platform access", "system": True}},
+        upsert=True,
+    )
+    await db["users"].update_many(
+        {"role": "admin", "admin_role": "administrator"},
+        {"$set": {"admin_permissions": current}},
+    )
 
 
 @asynccontextmanager
@@ -54,6 +82,7 @@ async def lifespan(_: FastAPI):
     await migrate_pricing(get_db())
     await migrate_global_nav_footer(get_db())
     await _cleanup_deprecated_feature_flags(get_db())
+    await _sync_administrator_role_permissions(get_db())
     yield
     await disconnect_db()
 
@@ -115,6 +144,8 @@ app.include_router(media.router)
 app.include_router(system.router)
 app.include_router(enterprise.router)
 app.include_router(infrastructure.router)
+app.include_router(security.router)
+app.include_router(developer.router)
 
 
 media_root = Path(get_settings().MEDIA_ROOT).resolve()

@@ -27,6 +27,11 @@ from app.security import (
 
 
 class LoginRateLimiter:
+    """In-process, single-instance rate limiter -- see the equivalent class
+    in backend/app/auth/router.py for the full rationale on why this stays
+    in-process for the current deployment model rather than moving to a
+    shared store."""
+
     def __init__(self, limit: int = 5, window_minutes: int = 15) -> None:
         self.limit = limit
         self.window = timedelta(minutes=window_minutes)
@@ -36,9 +41,11 @@ class LoginRateLimiter:
     async def check_rate_limit(self, identifier: str) -> bool:
         async with self._lock:
             now = datetime.now(timezone.utc)
-            attempts = self._failed_attempts.get(identifier, [])
-            attempts = [a for a in attempts if now - a < self.window]
-            self._failed_attempts[identifier] = attempts
+            attempts = [a for a in self._failed_attempts.get(identifier, []) if now - a < self.window]
+            if attempts:
+                self._failed_attempts[identifier] = attempts
+            else:
+                self._failed_attempts.pop(identifier, None)
             return len(attempts) < self.limit
 
     async def record_failure(self, identifier: str) -> None:

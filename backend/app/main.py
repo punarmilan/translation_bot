@@ -9,6 +9,7 @@ from app.auth.router import router as auth_router
 from app.config import get_settings
 from app.database import connect_db, disconnect_db, get_db
 from app.repositories.message_repository import MessageRepository
+from app.repositories.password_reset_repository import PasswordResetRepository
 from app.repositories.room_repository import RoomRepository
 from app.repositories.translation_log_repository import TranslationLogRepository
 from app.repositories.user_repository import UserRepository
@@ -26,7 +27,8 @@ async def lifespan(app: FastAPI):
     await RoomRepository(db).create_indexes()
     await MessageRepository(db).create_indexes()
     await TranslationLogRepository(db).create_indexes()
-    
+    await PasswordResetRepository(db).create_indexes()
+
     # Load settings from MongoDB
     from app.runtime_settings import runtime_settings
     await runtime_settings.load_from_db(db)

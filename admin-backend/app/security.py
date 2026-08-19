@@ -20,6 +20,8 @@ ALL_ADMIN_PERMISSIONS = {
     "feedback.read", "feedback.write", "announcements.read", "announcements.write",
     "roles.read", "roles.write", "audit.read", "system.read", "settings.read", "settings.write",
     "enterprise.read", "enterprise.write",
+    "security.read", "security.write",
+    "developer.read", "developer.write",
 }
 
 

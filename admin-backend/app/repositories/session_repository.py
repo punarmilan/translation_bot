@@ -65,3 +65,17 @@ class AdminSessionRepository:
             {"session_id": session_id, "revoked_at": None},
             {"$set": {"revoked_at": datetime.now(timezone.utc), "revoke_reason": reason}},
         )
+
+    async def list_active(self, limit: int = 200) -> list[dict]:
+        """Sessions that are neither revoked nor past their own expiry --
+        the same "active" definition get_active() uses for a single lookup,
+        surfaced here as a list for the Security module's session view."""
+        cursor = (
+            self.collection.find({
+                "revoked_at": None,
+                "expires_at": {"$gt": datetime.now(timezone.utc)},
+            })
+            .sort("created_at", -1)
+            .limit(limit)
+        )
+        return await cursor.to_list(length=limit)

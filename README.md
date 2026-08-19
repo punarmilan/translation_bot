@@ -559,8 +559,9 @@ refreshing the frontend.
 
 ### WebRTC connects locally but not across networks
 
-Google STUN is configured, but no TURN server is currently included. Some NAT
-and firewall combinations therefore cannot establish a direct peer connection.
+Google STUN is configured locally for development. Production includes coturn
+(port 3478, authenticated TURN relay, UDP/TCP media relaying) — see
+[`docs/PRODUCTION_DEPLOYMENT.md`](docs/PRODUCTION_DEPLOYMENT.md).
 
 ### LibreTranslate returns `400`
 
@@ -575,8 +576,7 @@ Use `tiny` for speed or `small` for accuracy.
 ## Current Limitations
 
 - Two-user video is the fully supported topology.
-- No TURN server is configured.
-- No SFU is configured for scalable multiparty media.
+- No SFU is configured for scalable multiparty media (TURN is configured in production).
 - LibreTranslate quality varies by language pair.
 - Piper voice quality and gender variety vary by language.
 - Whisper and Piper are CPU-heavy in the default local configuration.
@@ -586,8 +586,7 @@ Use `tiny` for speed or `small` for accuracy.
 
 ## Roadmap
 
-- Add TURN for reliable cross-network calls
-- Migrate multiparty meetings to an SFU
+- Migrate multiparty meetings to an SFU (currently peer-to-peer WebRTC with TURN relay)
 - Add separate spoken-language and listening-language preferences
 - Upgrade translation quality for Indian and low-resource languages
 - Run STT and TTS in managed worker processes
@@ -595,7 +594,7 @@ Use `tiny` for speed or `small` for accuracy.
 - Add meeting recording and transcript export
 - Expand admin moderation and analytics
 - Add automated browser-based WebRTC tests
-- Add production deployment and observability
+- Deepen production deployment observability and logging
 
 ## Additional Documentation
 

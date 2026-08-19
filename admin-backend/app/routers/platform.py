@@ -49,7 +49,7 @@ FEATURE_FLAG_DEFAULTS = [
     {"key": "ai_summary", "name": "AI Summary", "description": "Reserved -- no AI summary feature is implemented yet; toggling this has no effect.", "enabled": False},
     {"key": "stt", "name": "Speech-to-Text", "description": "Reserved -- STT is currently coupled to Voice Translation with no independent gate; toggling this has no effect.", "enabled": True},
     {"key": "tts", "name": "Text-to-Speech", "description": "Reserved -- TTS is currently coupled to Voice Translation with no independent gate; toggling this has no effect.", "enabled": True},
-    {"key": "blogs", "name": "Blog", "description": "Reserved -- the public Blog page is not currently gated by this flag; toggling this has no effect.", "enabled": True},
+    {"key": "blogs", "name": "Blog", "description": "Show the public Blog page. Disabling this redirects /blog and /blog/:slug to the homepage.", "enabled": True},
     {"key": "payments", "name": "Payments", "description": "Reserved -- no payments feature exists in this app; toggling this has no effect.", "enabled": False},
     {"key": "invitations", "name": "Invitations", "description": "Reserved -- no distinct invitations feature is gated by this flag; toggling this has no effect.", "enabled": True},
     {"key": "moderator_controls", "name": "Moderator Controls", "description": "Reserved -- host/moderator controls are always available to hosts today, not gated by this flag; toggling this has no effect.", "enabled": True},

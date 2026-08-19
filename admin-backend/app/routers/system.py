@@ -105,6 +105,13 @@ async def system_health(_: Annotated[dict, Depends(require_permission("system.re
             "disk_free_bytes": disk.free,
             "network_sent_bytes": network.bytes_sent,
             "network_received_bytes": network.bytes_recv,
+            # The control plane is Redis pub/sub only (see control_plane.py /
+            # control_consumer.py) -- nothing in this codebase ever writes to
+            # an `admin_commands` collection, so this is always 0. Left as-is
+            # (not removed/renamed) since changing the System Health API
+            # response shape is out of scope for the audit that found this;
+            # see PROJECT_HANDOFF.md and routers/developer.py's module
+            # docstring for the full explanation.
             "queue_length": await get_db()["admin_commands"].count_documents({"status": "queued"}),
             "connected_users": await get_db()["users"].count_documents({"is_online": True, "deleted_at": {"$exists": False}}),
             "uptime_seconds": round(time.time() - STARTED_AT),

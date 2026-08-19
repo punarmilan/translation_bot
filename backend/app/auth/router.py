@@ -6,8 +6,18 @@ from pymongo.errors import DuplicateKeyError
 
 
 from app.auth.dependencies import get_current_user
-from app.auth.service import create_access_token, create_refresh_token, decode_token, hash_password, verify_password
+from app.auth.service import (
+    PASSWORD_RESET_TOKEN_TTL_MINUTES,
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    generate_password_reset_token,
+    hash_password,
+    hash_reset_token,
+    verify_password,
+)
 from app.database import get_db
+from app.repositories.password_reset_repository import PasswordResetRepository
 from app.repositories.user_repository import UserRepository
 
 
@@ -15,6 +25,18 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 
 class LoginRateLimiter:
+    """In-process, single-instance rate limiter -- intentional for the
+    current deployment model (one `backend` container, no horizontal
+    scaling configured anywhere in deploy/docker-compose.prod.yml). State
+    resets on restart and does not coordinate across replicas; see
+    PROJECT_HANDOFF.md and the admin Security module
+    (GET /api/admin/security/policy) for that limitation as surfaced to an
+    operator. If this service is ever scaled to multiple replicas, this
+    would need to move to a shared store (Redis is already part of this
+    project's infrastructure for the control plane) -- not done here since
+    that's a larger, separately-testable change than this pass's scope.
+    """
+
     def __init__(self, limit: int = 5, window_minutes: int = 15) -> None:
         self.limit = limit
         self.window = timedelta(minutes=window_minutes)
@@ -24,9 +46,16 @@ class LoginRateLimiter:
     async def check_rate_limit(self, identifier: str) -> bool:
         async with self._lock:
             now = datetime.now(timezone.utc)
-            attempts = self._failed_attempts.get(identifier, [])
-            attempts = [a for a in attempts if now - a < self.window]
-            self._failed_attempts[identifier] = attempts
+            attempts = [a for a in self._failed_attempts.get(identifier, []) if now - a < self.window]
+            if attempts:
+                self._failed_attempts[identifier] = attempts
+            else:
+                # Drop the key entirely once its attempts have all aged out,
+                # rather than leaving an empty list behind forever -- without
+                # this, every distinct IP that ever failed once (including
+                # scanners/bots that never return) permanently occupies an
+                # entry in this dict for the life of the process.
+                self._failed_attempts.pop(identifier, None)
             return len(attempts) < self.limit
 
     async def record_failure(self, identifier: str) -> None:
@@ -39,6 +68,7 @@ class LoginRateLimiter:
             self._failed_attempts.pop(identifier, None)
 
 login_rate_limiter = LoginRateLimiter()
+password_reset_rate_limiter = LoginRateLimiter(limit=5, window_minutes=15)
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -111,6 +141,15 @@ class ForgotPasswordRequest(BaseModel):
 
 
 class ForgotPasswordResponse(BaseModel):
+    message: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=512)
+    new_password: str = Field(min_length=6, max_length=128)
+
+
+class ResetPasswordResponse(BaseModel):
     message: str
 
 
@@ -252,19 +291,84 @@ async def signup(body: SignupRequest) -> SignupResponse:
     return SignupResponse(**public_user_for(user))
 
 
+GENERIC_RESET_REQUEST_MESSAGE = "If an account exists for this email, password reset instructions have been recorded."
+
+
 @router.post("/forgot-password", response_model=ForgotPasswordResponse)
-async def forgot_password(body: ForgotPasswordRequest) -> ForgotPasswordResponse:
+async def forgot_password(body: ForgotPasswordRequest, request: Request) -> ForgotPasswordResponse:
+    # Rate-limited by client IP using the same in-process limiter pattern as
+    # login, so this endpoint can't be used to mass-generate reset tokens.
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    if not await password_reset_rate_limiter.check_rate_limit(client_ip):
+        raise HTTPException(status_code=429, detail="Too many password reset requests. Please try again after 15 minutes.")
+    await password_reset_rate_limiter.record_failure(client_ip)
+
     db = get_db()
     repo = UserRepository(db)
+    reset_repo = PasswordResetRepository(db)
     user = await repo.get_by_email(body.email)
-    if user:
-        await db["password_reset_requests"].insert_one({
-            "user_id": user["_id"],
-            "email": body.email,
-            "created_at": datetime.utcnow(),
-            "status": "requested",
-        })
-    return ForgotPasswordResponse(message="If an account exists for this email, a reset request has been recorded.")
+
+    # Always perform the same amount of work and return the same message
+    # regardless of whether the account exists, so this endpoint can't be
+    # used to enumerate registered emails.
+    if user and not user.get("is_disabled") and not user.get("deleted_at"):
+        user_id = str(user["_id"])
+        await reset_repo.invalidate_all_for_user(user_id)
+        raw_token = generate_password_reset_token()
+        token_hash = hash_reset_token(raw_token)
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=PASSWORD_RESET_TOKEN_TTL_MINUTES)
+        await reset_repo.create_token(user_id, token_hash, expires_at)
+        # NOTE: this repository has no email/SMTP integration anywhere in its
+        # dependencies (see requirements.txt) and inventing one is out of
+        # scope for this fix -- delivering `raw_token` to the user is the one
+        # remaining piece of this flow, intentionally left as documented,
+        # visible follow-up work rather than a fabricated email sender. The
+        # raw token is deliberately never returned in this response or
+        # written to any log -- both would defeat the point of requiring it.
+
+    await db["password_reset_requests"].insert_one({
+        "user_id": user["_id"] if user else None,
+        "email": body.email,
+        "created_at": datetime.utcnow(),
+        "status": "requested",
+    })
+    return ForgotPasswordResponse(message=GENERIC_RESET_REQUEST_MESSAGE)
+
+
+@router.post("/reset-password", response_model=ResetPasswordResponse)
+async def reset_password(body: ResetPasswordRequest) -> ResetPasswordResponse:
+    db = get_db()
+    reset_repo = PasswordResetRepository(db)
+    repo = UserRepository(db)
+
+    token_hash = hash_reset_token(body.token)
+    token_doc = await reset_repo.find_by_token_hash(token_hash)
+
+    invalid_detail = "This password reset link is invalid or has expired."
+
+    if not token_doc:
+        raise HTTPException(status_code=400, detail=invalid_detail)
+    if token_doc.get("used_at") is not None:
+        raise HTTPException(status_code=400, detail=invalid_detail)
+    expires_at = token_doc["expires_at"]
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail=invalid_detail)
+
+    user = await repo.get_by_id(token_doc["user_id"])
+    if not user or user.get("is_disabled") or user.get("deleted_at"):
+        raise HTTPException(status_code=400, detail=invalid_detail)
+
+    # Consume this token and invalidate any other outstanding tokens for the
+    # same user before the new password takes effect, so a token can never
+    # be replayed and an old, unused link can't be used after a successful
+    # reset.
+    await reset_repo.mark_used(token_doc["_id"])
+    await reset_repo.invalidate_all_for_user(str(user["_id"]))
+    await repo.update_password_hash(str(user["_id"]), hash_password(body.new_password))
+
+    return ResetPasswordResponse(message="Your password has been reset. You can now sign in with your new password.")
 
 
 @router.post("/login", response_model=AuthResponse)

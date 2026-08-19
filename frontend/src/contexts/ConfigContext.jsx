@@ -40,28 +40,30 @@ export function ConfigProvider({ children }) {
     social_youtube: "",
   });
   const [settings, setSettings] = useState({});
+  // Mirrors admin-backend's FEATURE_FLAG_DEFAULTS (routers/platform.py) as
+  // of Phase 10 -- `live_captions`/`recording`/`screen_sharing`/
+  // `waiting_room`/`captions` were removed there as pure duplicates of
+  // meeting_policy's already-live equivalents, so they're not listed here
+  // either; keeping a stale local default that no admin-backend response
+  // will ever populate is misleading dead state, not a safety net.
   const [featureFlags, setFeatureFlags] = useState({
     video_calling: true,
     voice_translation: true,
-    live_captions: true,
-    recording: true,
-    screen_sharing: true,
-    meeting_summary: true,
-    stt: true,
-    tts: true,
     whiteboard: true,
     files: true,
     meeting_notes: true,
-    ai_summary: true,
     diagnostics: true,
+    meeting_summary: false,
+    ai_summary: false,
+    stt: true,
+    tts: true,
     blogs: true,
     payments: false,
     invitations: true,
-    waiting_room: true,
     moderator_controls: true,
     breakout_rooms: false,
     reactions: true,
-    captions: true,
+    experimental_features: false,
   });
   const [sections, setSections] = useState([]);
   const [loading, setLoading] = useState(true);

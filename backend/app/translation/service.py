@@ -310,6 +310,12 @@ class TranslationService:
     ) -> TranslationResult:
         from app.runtime_settings import runtime_settings
         supported_langs = runtime_settings.enabled_languages
+        # Read live on every call, same pattern as translation_timeout_seconds
+        # in LibreTranslateProvider.translate() and detection_confidence
+        # below -- was previously admin-editable but never actually applied,
+        # so the cache always used TranslationCache's own 3600s default
+        # regardless of what an admin configured here.
+        self.cache.ttl_seconds = float(runtime_settings.translation_settings.get("cache_timeout_seconds", self.cache.ttl_seconds))
 
         source = normalize_language(source_lang)
         target = normalize_language(target_lang)
@@ -638,7 +644,8 @@ async def detect_language_profile(
         language = normalized_hint
         detection_source = "hint_low_confidence"
     elif language not in supported_langs:
-        language = normalized_hint if (normalized_hint and normalized_hint in supported_langs) else "en"
+        configured_fallback = normalize_language(runtime_settings.translation_settings.get("fallback_language", "en"))
+        language = normalized_hint if (normalized_hint and normalized_hint in supported_langs) else configured_fallback
         detection_source = "unsupported_fallback"
 
     detection = LanguageDetection(

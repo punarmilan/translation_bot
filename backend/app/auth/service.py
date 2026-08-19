@@ -1,3 +1,5 @@
+import hashlib
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -8,6 +10,8 @@ from app.config import get_settings
 
 _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+PASSWORD_RESET_TOKEN_TTL_MINUTES = 30
+
 
 def hash_password(password: str) -> str:
     return _pwd_context.hash(password)
@@ -17,10 +21,24 @@ def verify_password(plain: str, hashed: str) -> bool:
     return _pwd_context.verify(plain, hashed)
 
 
+def generate_password_reset_token() -> str:
+    """Cryptographically random, high-entropy, URL-safe token handed to the
+    requester once. Never persisted or logged in raw form -- see
+    hash_reset_token()."""
+    return secrets.token_urlsafe(32)
+
+
+def hash_reset_token(token: str) -> str:
+    """One-way hash of a reset token for storage/lookup. Using a hash (not
+    the raw token) as the persisted value means a database read alone can't
+    be used to complete someone else's reset."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 def create_access_token(user_id: str, username: str, role: str) -> str:
     settings = get_settings()
     expire = datetime.now(timezone.utc) + timedelta(
-        minutes=15  # Enforce 15-minute access token limit
+        minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
     )
     payload = {
         "sub": user_id,

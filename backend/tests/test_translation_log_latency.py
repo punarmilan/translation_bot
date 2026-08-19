@@ -36,7 +36,7 @@ class FakeWebSocket:
     async def send_text(self, payload: str) -> None:
         self.sent.append(json.loads(payload))
 
-    async def close(self) -> None:
+    async def close(self, code: int = 1000, reason: str | None = None) -> None:
         self.client_state = WebSocketState.DISCONNECTED
 
 

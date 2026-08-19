@@ -153,6 +153,12 @@ class UserRepository:
             },
         }
 
+    async def update_password_hash(self, user_id: str, password_hash: str) -> None:
+        await self.collection.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": {"password_hash": password_hash}},
+        )
+
     async def update_last_seen(self, user_id: str) -> None:
         await self.collection.update_one(
             {"_id": ObjectId(user_id)},

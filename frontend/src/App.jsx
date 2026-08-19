@@ -2,7 +2,7 @@ import { Component, useEffect } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
-import { ConfigProvider } from "./contexts/ConfigContext";
+import { ConfigProvider, useConfig } from "./contexts/ConfigContext";
 
 import LandingPage from "./pages/LandingPage";
 import PreviewRoute from "./pages/PreviewRoute";
@@ -16,6 +16,7 @@ import BlogPage from "./pages/BlogPage";
 import AboutPage from "./pages/AboutPage";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
+import ResetPasswordPage from "./pages/ResetPasswordPage";
 import ChatPage from "./pages/ChatPage";
 import ProfilePage from "./pages/ProfilePage";
 import VoiceTestPage from "./pages/VoiceTestPage";
@@ -25,6 +26,20 @@ function GuestOnly({ children }) {
   const location = useLocation();
   if (loading) return null;
   return user ? <Navigate to={`/chat${location.search}`} replace /> : children;
+}
+
+// admin-backend's FEATURE_FLAG_DEFAULTS ships `blogs` labeled "Reserved --
+// the public Blog page is not currently gated by this flag" (see
+// ADMIN_IMPLEMENTATION_PLAN.md Phase 6, "Wire featureFlags.blogs to
+// actually gate whether the Blog nav link/page is shown"). Defaults `true`
+// while ConfigContext's fetch is still in flight so a slow network doesn't
+// briefly bounce a real visitor off a page that's actually enabled.
+function FeatureGate({ flag, children }) {
+  const { featureFlags, loading } = useConfig();
+  if (!loading && featureFlags[flag] === false) {
+    return <Navigate to="/" replace />;
+  }
+  return children;
 }
 
 function ScrollToTop() {
@@ -51,8 +66,8 @@ function AppRoutes() {
         <Route path="/help" element={<HelpPage />} />
         <Route path="/docs" element={<DocsPage />} />
         <Route path="/pricing" element={<PricingPage />} />
-        <Route path="/blog" element={<BlogPage />} />
-        <Route path="/blog/:slug" element={<BlogPage />} />
+        <Route path="/blog" element={<FeatureGate flag="blogs"><BlogPage /></FeatureGate>} />
+        <Route path="/blog/:slug" element={<FeatureGate flag="blogs"><BlogPage /></FeatureGate>} />
         <Route path="/about" element={<AboutPage />} />
         <Route
           path="/login"
@@ -67,6 +82,14 @@ function AppRoutes() {
           element={
             <GuestOnly>
               <SignupPage />
+            </GuestOnly>
+          }
+        />
+        <Route
+          path="/reset-password"
+          element={
+            <GuestOnly>
+              <ResetPasswordPage />
             </GuestOnly>
           }
         />

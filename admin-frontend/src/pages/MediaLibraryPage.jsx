@@ -1,15 +1,14 @@
 import React, { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { fetchAdmin } from "../services/api";
 import AdminPageHeader from "../components/AdminPageHeader";
-import { Upload, Copy, Check, Search, Film, Sparkles, Image as ImageIcon } from "lucide-react";
+import { Copy, Check, Search, Film, Sparkles, Info } from "lucide-react";
 
 export default function MediaLibraryPage() {
   const [assets, setAssets] = useState([]);
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [copiedId, setCopiedId] = useState(null);
-  const [newUrl, setNewUrl] = useState("");
-  const [newTitle, setNewTitle] = useState("");
 
   useEffect(() => {
     fetchAdmin("/media")
@@ -25,21 +24,6 @@ export default function MediaLibraryPage() {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  const handleAddAsset = async (e) => {
-    e.preventDefault();
-    if (!newUrl) return;
-    const item = {
-      filename: newTitle || "External Asset",
-      url: newUrl,
-      media_type: newUrl.endsWith(".svg") ? "svg" : newUrl.endsWith(".mp4") ? "video" : newUrl.endsWith(".json") ? "lottie" : "image",
-      size: 1024,
-      created_at: new Date().toISOString(),
-    };
-    setAssets([item, ...assets]);
-    setNewUrl("");
-    setNewTitle("");
-  };
-
   const filtered = assets.filter((item) => {
     const matchType = filter === "all" || item.media_type === filter || (filter === "image" && !["video", "svg", "lottie"].includes(item.media_type));
     const matchSearch = !search || (item.filename || "").toLowerCase().includes(search.toLowerCase());
@@ -51,44 +35,18 @@ export default function MediaLibraryPage() {
       <AdminPageHeader
         eyebrow="Asset Management & Optimization"
         title="Central Media Library"
-        description="Upload or register PNG, SVG, WEBP, AVIF, GIF, Lottie JSON, and Video URLs. Copy CDN links instantly."
+        description="Browse, search, and copy CDN links for uploaded assets. To upload a new file, use the Media page."
       />
 
-      {/* Add New Asset Box */}
-      <section className="admin-settings-panel" style={{ marginTop: "16px" }}>
-        <header>
-          <span>Asset Uploader & CDN Registration</span>
-          <h2>Register External Asset or CDN URL</h2>
-        </header>
-        <form onSubmit={handleAddAsset} className="admin-form-grid" style={{ paddingBottom: 0 }}>
-          <label>
-            <span>Asset Title / Name</span>
-            <input
-              type="text"
-              placeholder="Hero Graphic / Logo"
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-            />
-          </label>
-          <label>
-            <span>CDN / Image URL</span>
-            <input
-              type="url"
-              placeholder="https://cdn.voxo.ai/hero.png or /images/hero.png"
-              value={newUrl}
-              onChange={(e) => setNewUrl(e.target.value)}
-            />
-          </label>
-          <div style={{ gridColumn: "span 2", display: "flex", justifyContent: "flex-end" }}>
-            <button
-              type="submit"
-              disabled={!newUrl}
-              className="admin-button admin-button--primary"
-            >
-              <Upload size={15} />Add to Media Library
-            </button>
-          </div>
-        </form>
+      <section className="admin-alert" style={{ marginTop: "16px", display: "flex", gap: 8, alignItems: "flex-start" }}>
+        <Info size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+        <span>
+          Registering an external CDN URL here previously appeared to work but never persisted anything -- it only
+          held the entry in local component state, which was lost on refresh. There is no storage model in this
+          admin console for an asset with no locally-uploaded file (every real asset here is backed by a file on
+          disk), so that control has been removed rather than left silently broken. To add a new asset, upload a
+          file from the <Link to="/admin/media" style={{ textDecoration: "underline" }}>Media</Link> page instead.
+        </span>
       </section>
 
       {/* Toolbar / Search & Filters */}

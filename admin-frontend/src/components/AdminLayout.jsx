@@ -1,7 +1,7 @@
 import {
   Activity, BarChart3, Bell, BookMarked, BookOpenText, BrainCircuit, Building2, ChevronDown, CircleUserRound, Database,
   FileClock, Files, Folder, Gauge, Languages, LayoutDashboard, Megaphone, Menu, MessageSquareText,
-  MicVocal, Network, Palette, Search, Settings, ShieldCheck, SlidersHorizontal, ToggleLeft, Users, Video, X,
+  MicVocal, Network, Palette, Plug, Search, Settings, ShieldAlert, ShieldCheck, SlidersHorizontal, ToggleLeft, Users, Video, X,
 } from "lucide-react";
 import { useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -31,6 +31,8 @@ const navigation = [
   ["/admin/feedback", MessageSquareText, "Feedback"],
   ["/admin/announcements", Megaphone, "Announcements"],
   ["/admin/roles", ShieldCheck, "Roles & Permissions"],
+  ["/admin/security", ShieldAlert, "Security"],
+  ["/admin/developer", Plug, "Developer Tools"],
   ["/admin/settings", Settings, "Settings"],
   ["/admin/logs", FileClock, "Audit Logs"],
   ["/admin/system", Activity, "System Health"],
